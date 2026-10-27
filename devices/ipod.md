@@ -282,6 +282,7 @@ iPod_Control/
 | Shuffle 1-2G | Yes | No | No | No | — | None |
 | Nano 1-2G | Yes | No | Yes | No | — | 176x132 |
 | Nano 3-5G | Yes | Yes | Yes | Yes | ipod-nano-3g | Varies |
+| Nano 7G | Yes | Yes | Yes | Yes | ipod-classic | 240x432 |
 | Video 5G | Yes | Yes | Yes | Yes | ipod-video-5g | 320x240 |
 | Video 5.5G | Yes | Yes | Yes | Yes | ipod-video-5g | 320x240 |
 | Classic 6G | Yes | Yes | Yes | Yes | ipod-classic | 320x240 |
@@ -293,8 +294,7 @@ iPod_Control/
 | Generation | Reason |
 |------------|--------|
 | Shuffle 3-4G | Buttonless; writing their iTunesSD playback database is unverified on hardware |
-| Nano 6G | Reads and archives (hardware-confirmed); syncing is not supported yet |
-| Nano 7G | Reads and archives cleanly (hardware-confirmed); the firmware shows no music for a library libgpod writes |
+| Nano 6G | Reads and archives (hardware-confirmed); its library writes are covered only by synthetic tests, not by hardware |
 | Touch (all) | iOS protocol + cryptographic iTunesDB signing |
 | iPhone (all) | iOS protocol + cryptographic iTunesDB signing |
 | iPad | iOS protocol + cryptographic iTunesDB signing |
@@ -352,4 +352,4 @@ Fully implemented in podkit. Key implementation files:
 ## Nano 6G/7G signing
 
 The nano 6th and 7th generation sign `iTunesCDB` and `Locations.itdb.cbk` with hashAB, which podkit's libgpod builds compute ([ADR-030](../docs/adr/adr-030-native-nano-hashab.md); checks in `tools/nano7/`).
-On a nano 7G the firmware shows no music for a library libgpod writes, so both generations stay read-only.
+For them it also writes iTunes' category containers and schema level into the SQLite library and keeps the play data the device records (`tools/nano7/README.md`); the nano 7G syncs, the nano 6G stays read-only.

@@ -1,6 +1,6 @@
 ---
 title: 'ADR-030: Link an Open HashAB Signer Into libgpod'
-description: Build libgpod with the Unlicense dstaley/hashab C sources instead of loading an external hashab blob, so the iPod nano 6th/7th generation databases can be signed. Signing alone does not make those generations syncable; they stay read-only.
+description: Build libgpod with the Unlicense dstaley/hashab C sources instead of loading an external hashab blob, so the iPod nano 6th/7th generation databases can be signed. Signing alone does not make those generations syncable.
 sidebar:
   order: 31
 ---
@@ -68,3 +68,8 @@ firmware shows no music. `nano_6g` and `nano_7g` therefore keep
 `support.access = 'read-only'`; the nano 6th generation's writes are covered
 only by synthetic tests. Enabling sync for either generation needs a complete
 library write that is verified on the device.
+
+The nano 7th generation became syncable once libgpod also writes the
+firmware's category containers and iTunes' schema level and keeps the play
+data the device records (`tools/nano7/README.md`); the nano 6th generation
+stays read-only.

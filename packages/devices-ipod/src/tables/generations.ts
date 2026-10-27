@@ -14,9 +14,8 @@
  * is asserted in `capabilities.test.ts` for every generation that has a
  * libgpod equivalent. Generations that map to libgpod's `unknown` (nano 7G,
  * touch 5G–7G) are sourced exclusively from this table for capability data.
- * Their `support.access` differs by generation: nano 7G is `read-only`
- * (hardware-confirmed readable; library writes not supported yet), touch 5G–7G
- * carry `support.access: 'none'` (no disk mode at all).
+ * Their `support.access` differs by generation: nano 7G is `syncable`, touch
+ * 5G–7G carry `support.access: 'none'` (no disk mode at all).
  *
  * @module
  */
@@ -196,7 +195,7 @@ export const GENERATIONS: Record<IpodGenerationId, IpodGeneration> = {
     support: {
       access: 'read-only',
       verified: 'hardware',
-      note: 'Reads and archives (259 tracks confirmed on hardware); syncing is not supported yet.',
+      note: 'Reads and archives (259 tracks confirmed on hardware); its library writes are covered only by synthetic tests, not by hardware.',
     },
     supportsAlac: false,
     supportsVideo: false,
@@ -208,12 +207,15 @@ export const GENERATIONS: Record<IpodGenerationId, IpodGeneration> = {
     ordinal: 7,
     checksumType: 'hashAB',
     // Read on real hardware through libgpod's iTunesCDB parser (1,414 tracks,
-    // `device archive` succeeded). Its databases are signed (ADR-030), but the
-    // firmware shows no music for a library libgpod writes, so writes stay refused.
+    // `device archive` succeeded). Writes are signed (ADR-030) and give the
+    // SQLite library iTunes' category containers and schema level, which a
+    // device on firmware 1.0.4 needed to show music. On that firmware a real
+    // device showed and played libraries written this way, also after a
+    // reboot, and kept the plays, skips and ratings it had recorded.
     support: {
-      access: 'read-only',
+      access: 'syncable',
       verified: 'hardware',
-      note: 'Reads iTunesDB (1,414 tracks confirmed) and archives cleanly; the firmware shows no music for a library libgpod writes, so syncing is not supported yet.',
+      note: 'Syncs (confirmed on hardware, firmware 1.0.4); reads iTunesDB (1,414 tracks confirmed on hardware) and archives cleanly.',
     },
     supportsAlac: true,
     supportsVideo: true,

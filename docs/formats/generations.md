@@ -69,8 +69,8 @@ after changing the table, then regenerate this block from
 | iPod nano (3rd Generation) | `nano_3g` | syncable | inferred | — |
 | iPod nano (4th Generation) | `nano_4g` | syncable | inferred | — |
 | iPod nano (5th Generation) | `nano_5g` | syncable | inferred | — |
-| iPod nano (6th Generation) | `nano_6g` | read-only | hardware | Reads and archives (259 tracks confirmed on hardware); syncing is not supported yet. |
-| iPod nano (7th Generation) | `nano_7g` | read-only | hardware | Reads iTunesDB (1,414 tracks confirmed) and archives cleanly; the firmware shows no music for a library libgpod writes, so syncing is not supported yet. |
+| iPod nano (6th Generation) | `nano_6g` | read-only | hardware | Reads and archives (259 tracks confirmed on hardware); its library writes are covered only by synthetic tests, not by hardware. |
+| iPod nano (7th Generation) | `nano_7g` | syncable | hardware | Syncs (confirmed on hardware, firmware 1.0.4); reads iTunesDB (1,414 tracks confirmed on hardware) and archives cleanly. |
 | iPod shuffle (1st Generation) | `shuffle_1g` | syncable | inferred | — |
 | iPod shuffle (2nd Generation) | `shuffle_2g` | syncable | inferred | — |
 | iPod shuffle (3rd Generation) | `shuffle_3g` | read-only | hardware | Reads iTunesDB; writing the bdhs iTunesSD playback DB is unverified on hardware. |
@@ -112,13 +112,9 @@ after changing the table, then regenerate this block from
   `hardware`-confirmed.
   See [itunessd-bdhs.md](itunessd-bdhs.md).
 - **nano 6g — `read-only`, hardware-confirmed.** A real nano 6G read and
-  archived 259 tracks. It signs its databases with hashAB like the nano 7g;
-  its writes are covered only by synthetic tests.
-- **nano 7g — `read-only`, hardware-confirmed.** libgpod opens its classic
-  iTunesCDB `iTunesDB` fine — a real nano 7G read 1,414 tracks and archived
-  cleanly. podkit's libgpod build signs its databases with hashAB
-  ([ADR-030](../adr/adr-030-native-nano-hashab.md)), but the firmware shows no
-  music for a library libgpod writes, so writes stay refused.
+  archived 259 tracks. podkit's libgpod writes its library like the nano 7g's
+  ([ADR-030](../adr/adr-030-native-nano-hashab.md), `tools/nano7/`), but
+  only synthetic tests cover that.
 - **iPod touch (all), not-in-libgpod — `none`.** No mountable database, or
   Apple's proprietary sync protocol that podkit cannot speak over disk mode.
 

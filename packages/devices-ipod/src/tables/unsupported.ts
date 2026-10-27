@@ -15,10 +15,8 @@ import { SUPPORTED_DEVICES_DOCS_URL } from '../build-unsupported-reason.js';
  * Unsupported categories:
  * - Shuffle 3G/4G: readable, but writing their `bdhs` playback database has
  *   never been verified on hardware, so podkit does not attempt it.
- * - Nano 6G: readable; syncing is not supported yet.
- * - Nano 7G: readable — libgpod opens its iTunesCDB fine (hardware-confirmed,
- *   1,414 tracks). Its databases are signed (ADR-030), but the firmware shows no
- *   music for a library libgpod writes.
+ * - Nano 6G: readable; its library writes are covered only by synthetic tests,
+ *   not by hardware.
  * - iPod touch (all generations): Apple's proprietary sync protocol; no disk mode.
  * - iPhone / iPad: Apple's proprietary sync protocol; no disk mode.
  * - Apple TV, Apple Watch, HomePod: non-iPod Apple USB devices; out of scope.
@@ -46,12 +44,7 @@ const SHUFFLE_REASON =
   'iPod shuffle 3rd/4th gen can be read but not written: writing its iTunesSD playback database is unverified on hardware.';
 
 const NANO_6G_REASON =
-  'iPod nano 6th gen can be read and archived, but not synced yet: writing its library is not supported.';
-
-// Valid signatures are not enough: the firmware shows no music for a library
-// libgpod writes (ADR-030).
-const NANO_7G_REASON =
-  'iPod nano 7th gen can be read and archived, but not synced yet: its firmware shows no music for a library podkit writes.';
+  'iPod nano 6th gen can be read and archived, but not synced yet: its library writes are not verified on hardware.';
 
 const itouch = (gen: string) =>
   `iPod touch (${gen}) uses Apple's proprietary sync protocol; podkit only supports iPod disk mode.`;
@@ -75,11 +68,6 @@ export const UNSUPPORTED_IPOD_PRODUCT_IDS: Record<string, string> = {
   // ── iPod nano 6G ───────────────────────────────────────────────────────────
   '120d': NANO_6G_REASON,
   '1266': NANO_6G_REASON,
-
-  // ── iPod nano 7G ───────────────────────────────────────────────────────────
-  // Not in libgpod 0.8.3 ipod_info_table. USB IDs from linux-usb.org + IPOD_USB_IDS.
-  '120e': NANO_7G_REASON,
-  '1267': NANO_7G_REASON,
 
   // ── iPod touch (all generations) ───────────────────────────────────────────
   // Apple's proprietary sync protocol; no disk mode on any touch generation.

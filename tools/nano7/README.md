@@ -4,9 +4,11 @@ The iPod nano 6th and 7th generation sign `iTunesCDB` and
 `iTunes Library.itlp/Locations.itdb.cbk` with HashAB. podkit's libgpod builds
 link the vendored signer from `tools/prebuild/vendor/hashab` through
 `tools/prebuild/libgpod-nano.patch` (see
-[ADR-030](../../docs/adr/adr-030-native-nano-hashab.md)). Both generations stay
-**read-only** in podkit: the nano 7th generation firmware shows no music for a
-library libgpod writes, although its signatures verify.
+[ADR-030](../../docs/adr/adr-030-native-nano-hashab.md)). Valid signatures
+alone do not make a library acceptable to the nano 7th generation firmware;
+the patch also gives the SQLite library iTunes' layout (see below), and podkit
+syncs that generation. The nano 6th generation stays **read-only**: its writes
+are covered only by synthetic tests.
 
 These tools need Python 3.11+ and a C compiler, and no pip or npm packages.
 
