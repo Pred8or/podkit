@@ -103,7 +103,23 @@
  						     unsigned char *itdb_data,
 --- a/src/itdb_itunesdb.c
 +++ b/src/itdb_itunesdb.c
-@@ -2269,6 +2269,8 @@ static glong get_playlist (FImport *fimp, guint mhsd_type, glong mhyp_seek)
+@@ -987,6 +987,7 @@ static gboolean playcounts_read (FImport *fimp, FContents *cts)
+ 	playcount->playcount = get32lint (cts, seek);	
+ 	mac_time = get32lint (cts, seek+4);
+ 	playcount->time_played = device_time_mac_to_time_t (fimp->itdb->device, mac_time);
++	playcount->mac_played = mac_time;
+ 	playcount->bookmark_time = get32lint (cts, seek+8);
+ 	
+ 	/* rating only exists if the entry length is at least 0x10 */
+@@ -1009,6 +1010,7 @@ static gboolean playcounts_read (FImport *fimp, FContents *cts)
+ 	{
+ 	    playcount->skipcount = get32lint (cts, seek+20);
+ 	    mac_time = get32lint (cts, seek+24);
++	    playcount->mac_skipped = mac_time;
+ 	    playcount->last_skipped = device_time_mac_to_time_t (fimp->itdb->device,
+ 							       mac_time);
+ 
+@@ -2269,6 +2271,8 @@ static glong get_playlist (FImport *fimp, guint mhsd_type, glong mhyp_seek)
    plitem->sortorder = get32lint (cts, mhyp_seek+44);
    if (header_len >= 0x6C) {
        plitem->priv->mhsd5_type = get16lint (cts, mhyp_seek+0x50);
@@ -112,7 +128,51 @@
    }
  
    mhod_seek = mhyp_seek + header_len;
-@@ -4640,7 +4642,12 @@ static void mk_mhod (FExport *fexp, MHODData *mhod)
+@@ -2437,6 +2441,15 @@ static glong get_playlist (FImport *fimp, guint mhsd_type, glong mhyp_seek)
+ }
+ 
+ 
++/* iPod nano 6G/7G write Play Counts dates with the database's fixed
++   offset, and "none" as 2001-01-01 00:00 shifted by it */
++static time_t play_counts_time (Itdb_iTunesDB *itdb, guint32 mac_time)
++{
++    if (mac_time == 2082844800u + 978307200u + (guint32) itdb->tzoffset)
++	return 0;
++    return (time_t) mac_time - 2082844800 - itdb->tzoffset;
++}
++
+ /* returns a pointer to the next header or -1 on error. fimp->error is
+    set appropriately. If no "mhit" header is found at the location
+    specified, -1 is returned but no error is set. */
+@@ -2729,6 +2742,19 @@ static glong get_mhit (FImport *fimp, glong mhit_seek)
+       playcount = g_hash_table_lookup (fimp->pcounts2, &track->dbid);
+       free_playcount = FALSE;
+   }
++  if (playcount && itdb_device_is_hashab_nano (fimp->itdb->device))
++  {
++      /* only the Play Counts file sets mac_played and mac_skipped */
++      if (playcount->mac_played) {
++	  playcount->time_played = play_counts_time (fimp->itdb, playcount->mac_played);
++	  track->priv->reported_played = playcount->time_played;
++      }
++      if (playcount->mac_skipped) {
++	  track->priv->reported_skipped = play_counts_time (fimp->itdb, playcount->mac_skipped);
++	  if (track->priv->reported_skipped)
++	      track->last_skipped = track->priv->reported_skipped;
++      }
++  }
+   if (playcount)
+   {
+       if (playcount->rating != NO_PLAYCOUNT)
+@@ -3314,6 +3340,7 @@ itdb_parse_internal (Itdb_iTunesDB *itdb, gboolean compressed, GError **error)
+ 	{
+ 	    if (read_OTG_playlists (fimp))
+ 	    {
++		itdb_sqlite_read_device_state (fimp->itdb);
+ 		success = TRUE;
+ 	    }
+ 	}
+@@ -4640,7 +4667,12 @@ static void mk_mhod (FExport *fexp, MHODData *mhod)
  	      g_return_if_fail (splr);
  	      ft = itdb_splr_get_field_type (splr);
  /*	      printf ("%p: field: %d ft: %d\n", splr, splr->field, ft);*/
@@ -126,7 +186,7 @@
  	      put32bint (cts, splr->field);
  	      put32bint (cts, splr->action);
  	      put32_n0 (cts, 11);          /* unknown              */	      
-@@ -5529,13 +5536,20 @@ static gboolean write_playlist (FExport *fexp,
+@@ -5529,13 +5561,20 @@ static gboolean write_playlist (FExport *fexp,
          put32_n0 (cts, 8);            /* ?                         */
          /* +0x50 */
          put16lint (cts, pl->priv->mhsd5_type);
@@ -153,7 +213,7 @@
          }
          put32_n0 (cts, 5); /* ? */
  
-@@ -5991,6 +6005,8 @@ static gboolean itdb_write_file_internal (Itdb_iTunesDB *itdb,
+@@ -5991,6 +6030,8 @@ static gboolean itdb_write_file_internal (Itdb_iTunesDB *itdb,
      g_return_val_if_fail (itdb->device, FALSE);
      g_return_val_if_fail (filename || itdb->filename, FALSE);
  
@@ -162,7 +222,7 @@
      if (!filename) filename = itdb->filename;
  
      /* set endianess flag */
-@@ -8254,6 +8270,28 @@ G_GNUC_INTERNAL GByteArray *itdb_chapterdata_build_chapter_blob(Itdb_Chapterdata
+@@ -8254,6 +8295,28 @@ G_GNUC_INTERNAL GByteArray *itdb_chapterdata_build_chapter_blob(Itdb_Chapterdata
      return chapter_blob;
  }
  
@@ -270,7 +330,36 @@
   * @itdb:   an #Itdb_iTunesDB
 --- a/src/itdb_private.h
 +++ b/src/itdb_private.h
-@@ -210,11 +210,18 @@ struct _Itdb_Track_Private {
+@@ -108,6 +108,9 @@ struct playcount {
+     time_t last_skipped;
+     gint32 st_unk06;     /* unknown field in iTunesStats file */
+     gint32 st_unk09;     /* unknown field in iTunesStats file */
++    /* time_played and last_skipped as stored in the Play Counts file */
++    guint32 mac_played;
++    guint32 mac_skipped;
+ };
+ 
+ /* value to indicate that playcount was not set in struct playcount
+@@ -186,6 +189,8 @@ typedef enum _Itdb_Playlist_Mhsd5_Type Itdb_Playlist_Mhsd5_Type;
+ struct _Itdb_iTunesDB_Private
+ {
+     GList *mhsd5_playlists;
++    /* iPod nano 6G/7G: Dynamic.itdb exists but could not be read */
++    gboolean dynamic_unread;
+     guint16 platform;
+     guint16 unk_0x22;
+     guint64 id_0x24;
+@@ -206,15 +211,28 @@ struct _Itdb_Track_Private {
+ 	guint32 album_id;
+ 	guint32 artist_id;
+ 	guint32 composer_id;
++	/* iPod nano 6G/7G: the dates the Play Counts file reported */
++	time_t reported_played;
++	time_t reported_skipped;
++	/* iPod nano 6G/7G: Dynamic.itdb marks the track as played; the
++	   firmware sets this when a track is started or skipped */
++	gboolean device_played;
+ };
  
  struct _Itdb_Playlist_Private {
      Itdb_Playlist_Mhsd5_Type mhsd5_type;
@@ -289,6 +378,14 @@
  G_GNUC_INTERNAL gboolean itdb_spl_action_known (ItdbSPLAction action);
  G_GNUC_INTERNAL void itdb_splr_free (Itdb_SPLRule *splr);
  G_GNUC_INTERNAL const gchar *itdb_photodb_get_mountpoint (Itdb_PhotoDB *photodb);
+@@ -230,6 +248,7 @@ G_GNUC_INTERNAL guint64 device_time_time_t_to_mac (Itdb_Device *device,
+ 						 time_t timet);
+ G_GNUC_INTERNAL gint itdb_musicdirs_number_by_mountpoint (const gchar *mountpoint);
+ G_GNUC_INTERNAL int itdb_sqlite_generate_itdbs(FExport *fexp);
++G_GNUC_INTERNAL void itdb_sqlite_read_device_state(Itdb_iTunesDB *itdb);
+ G_GNUC_INTERNAL gboolean itdb_hashAB_write_hash (const Itdb_Device *device,
+ 						 unsigned char *itdb_data,
+ 						 gsize itdb_len,
 --- a/src/itdb_sqlite_queries.h
 +++ b/src/itdb_sqlite_queries.h
 @@ -77,6 +77,22 @@ static const char Library_create[] =
@@ -316,7 +413,21 @@
  	"BEGIN TRANSACTION;" \
 --- a/src/itdb_sqlite.c
 +++ b/src/itdb_sqlite.c
-@@ -180,6 +180,25 @@ static void destroy_key_orders(GHashTable **orders)
+@@ -46,9 +46,13 @@
+ 
+ /** time zone offset in seconds */
+ static uint32_t tzoffset = 0;
++/* iPod nano 6G/7G: dates are UTC, and an unset one stays 0 */
++static gboolean utc_dates = FALSE;
+ 
+ static uint32_t timeconv(time_t tv)
+ {
++    if (utc_dates)
++	return tv ? tv - 978307200 : 0;
+     /* quite strange. this is time_t - 01.01.2001 01:00:00 - tzoffset */
+     return tv - 978307200 - tzoffset;
+ }
+@@ -180,6 +184,25 @@ static void destroy_key_orders(GHashTable **orders)
      g_free(orders);
  }
  
@@ -342,7 +453,7 @@
  static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
  {
      int res = -1;
-@@ -190,6 +209,8 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -190,6 +213,8 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
      struct stat fst;
      int idx = 0;
      GList *gl = NULL;
@@ -351,7 +462,7 @@
  
      dbf = g_build_filename(outpath, "Dynamic.itdb", NULL);
      printf("[%s] Processing '%s'\n", __func__, dbf);
-@@ -227,7 +248,11 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -227,7 +252,11 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
  	goto leave;
      }
  
@@ -364,7 +475,16 @@
  
      if (itdb->tracks) {
  	printf("[%s] - processing %d tracks\n", __func__, g_list_length(itdb->tracks));
-@@ -277,6 +302,8 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -248,7 +277,7 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+ 	    /* item_pid */
+ 	    sqlite3_bind_int64(stmt, ++idx, track->dbid);
+ 	    /* has_been_played */
+-	    sqlite3_bind_int(stmt, ++idx, (track->playcount > 0) ? 1 : 0);
++	    sqlite3_bind_int(stmt, ++idx, (track->playcount > 0 || track->priv->device_played) ? 1 : 0);
+ 	    /* date_played */
+ 	    sqlite3_bind_int(stmt, ++idx, timeconv(track->time_played));
+ 	    /* play_count_user */
+@@ -277,6 +306,8 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
  		/* expected result */
  	    } else {
  		fprintf(stderr, "[%s] 1 sqlite3_step returned %d\n", __func__, res);
@@ -373,7 +493,7 @@
  	    }
  	}
  	if (stmt) {
-@@ -293,8 +320,9 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -293,8 +324,9 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
  	    goto leave;
      }
  
@@ -385,7 +505,7 @@
  	Itdb_Playlist *pl = (Itdb_Playlist*)gl->data;
  
  	res = sqlite3_reset(stmt);
-@@ -333,19 +361,24 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -333,19 +365,24 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
  	    /* expected result */
  	} else {
  	    fprintf(stderr, "[%s] 2 sqlite3_step returned %d\n", __func__, res);
@@ -415,7 +535,7 @@
      if (db) {
  	sqlite3_close(db);
      }
-@@ -363,6 +396,7 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -363,6 +400,7 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
      sqlite3 *db = NULL;
      sqlite3_stmt *stmt_chapter = NULL;
      char *errmsg = NULL;
@@ -423,7 +543,7 @@
      struct stat fst;
      GList *gl = NULL;
  
-@@ -399,7 +433,11 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -399,7 +437,11 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
  	}
      }
  
@@ -436,7 +556,7 @@
      if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"chapter\" VALUES(?,?);", -1, &stmt_chapter, NULL)) {
  	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
  	goto leave;
-@@ -450,9 +488,15 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -450,9 +492,15 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
  		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
  	    }
  	    g_byte_array_free(chapter_blob, TRUE);
@@ -453,7 +573,7 @@
  
      res = 0;
      printf("[%s] done.\n", __func__);
-@@ -510,6 +554,12 @@ static int mk_Genius(Itdb_iTunesDB *itdb, const char *outpath)
+@@ -510,6 +558,12 @@ static int mk_Genius(Itdb_iTunesDB *itdb, const char *outpath)
  	    goto leave;
  	}
      }
@@ -466,7 +586,7 @@
  
      sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
  
-@@ -606,15 +656,19 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -606,15 +660,19 @@ static int mk_Library(Itdb_iTunesDB *itdb,
      sqlite3_stmt *stmt_artist = NULL;
      sqlite3_stmt *stmt_composer = NULL;
      sqlite3_stmt *stmt_video_info = NULL;
@@ -486,7 +606,7 @@
      printf("library_persistent_id = 0x%016"G_GINT64_MODIFIER"x\n", itdb->priv->pid);
  
      dbf = g_build_filename(outpath, "Library.itdb", NULL);
-@@ -652,8 +706,16 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -652,8 +710,16 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	}
  	goto leave;
      }
@@ -504,7 +624,7 @@
  
      fprintf(stderr, "[%s] compiling SQL statements\n", __func__);
      if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"version_info\" VALUES(?,?,?,?,?,?,?);", -1, &stmt_version_info, NULL)) {
-@@ -665,7 +727,17 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -665,7 +731,17 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	goto leave;
      }
      if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"container\" "
@@ -523,7 +643,7 @@
  	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
  	goto leave;
      }
-@@ -688,7 +760,10 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -688,7 +764,10 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
  	goto leave;
      }
@@ -535,7 +655,7 @@
  	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
  	goto leave;
      }
-@@ -708,7 +783,12 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -708,7 +787,12 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
  	goto leave;
      }
@@ -549,7 +669,7 @@
  	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
  	goto leave;
      }
-@@ -721,9 +801,10 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -721,9 +805,10 @@ static int mk_Library(Itdb_iTunesDB *itdb,
      /* major */
      /* FIXME: the versioning scheme needs to be updated in libgpod using */
      /* major+minor version, this is a workaround */
@@ -562,7 +682,7 @@
      /* compatibility */
      /* This has an unknown meaning. use 0. */
      sqlite3_bind_int(stmt_version_info, ++idx, 0);
-@@ -740,6 +821,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -740,6 +825,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	/* expected result */
      } else {
  	fprintf(stderr, "[%s] 2 sqlite3_step returned %d\n", __func__, res);
@@ -571,7 +691,7 @@
      }
  
      printf("[%s] - inserting into \"genre_map\"\n", __func__);
-@@ -809,10 +892,15 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -809,10 +896,15 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  		/* expected result */
  	    } else {
  		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
@@ -587,7 +707,7 @@
  
  	printf("[%s] - inserting playlist '%s' into \"container\"\n", __func__, pl->name);
  	res = sqlite3_reset(stmt_container);
-@@ -863,6 +951,48 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -863,6 +955,48 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	    /* expected result */
  	} else {
  	    fprintf(stderr, "[%s] 4 sqlite3_step returned %d\n", __func__, res);
@@ -636,7 +756,7 @@
  	}
      }
  
-@@ -911,6 +1041,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -911,6 +1045,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	/* expected result */
      } else {
  	fprintf(stderr, "[%s] 3 sqlite3_step returned %d\n", __func__, res);
@@ -645,7 +765,7 @@
      }
  
      /* for each track: */
-@@ -1088,6 +1220,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -1088,6 +1224,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	    /* expected result */
  	} else {
  	    fprintf(stderr, "[%s] 5 sqlite3_step returned %d: %s\n", __func__, res, sqlite3_errmsg(db));
@@ -654,7 +774,7 @@
  	}
  
  	/* printf("[%s] -- inserting into \"avformat_info\"\n", __func__); */
-@@ -1144,6 +1278,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -1144,6 +1282,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  	    /* expected result */
  	} else {
  	    fprintf(stderr, "[%s] 7 sqlite3_step returned %d\n", __func__, res);
@@ -663,7 +783,7 @@
  	}
  
  	/* this is done by a trigger, so we don't need to do this :-D */
-@@ -1191,6 +1327,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -1191,6 +1331,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  		/* expected result */
  	    } else {
  		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
@@ -672,7 +792,7 @@
  	    }
  	}
  
-@@ -1227,6 +1365,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -1227,6 +1369,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  		/* expected result */
  	    } else {
  		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
@@ -681,7 +801,7 @@
  	    }
  	}
  
-@@ -1252,6 +1392,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -1252,6 +1396,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  		/* expected result */
  	    } else {
  		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
@@ -690,7 +810,7 @@
  	    }
  	}
  	/* if it's a movie, music video or tv show */
-@@ -1314,13 +1456,19 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+@@ -1314,13 +1460,19 @@ static int mk_Library(Itdb_iTunesDB *itdb,
  		/* expected result */
  	    } else {
  		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
@@ -711,7 +831,7 @@
  
      res = 0;
      printf("[%s] done.\n", __func__);
-@@ -1365,6 +1513,10 @@ leave:
+@@ -1365,6 +1517,10 @@ leave:
      if (stmt_video_info) {
  	sqlite3_finalize(stmt_video_info);
      }
@@ -722,7 +842,7 @@
      if (genre_map) {
  	g_hash_table_destroy(genre_map);
      }
-@@ -1385,6 +1537,7 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+@@ -1385,6 +1541,7 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
      sqlite3_stmt *stmt = NULL;
      char *errmsg = NULL;
      int idx = 0;
@@ -730,7 +850,7 @@
  
      dbf = g_build_filename(outpath, "Locations.itdb", NULL);
      printf("[%s] Processing '%s'\n", __func__, dbf);
-@@ -1415,7 +1568,11 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+@@ -1415,7 +1572,11 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
  	goto leave;
      }
  
@@ -743,7 +863,7 @@
  
      if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"base_location\" (id, path) VALUES (?,?);", -1, &stmt, NULL)) {
  	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
-@@ -1438,6 +1595,8 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+@@ -1438,6 +1599,8 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
  	/* expected result */
      } else {
  	fprintf(stderr, "[%s] sqlite3_step returned %d\n", __func__, res);
@@ -752,7 +872,7 @@
      }
  
      if (itdb_device_is_iphone_family(itdb->device)) {
-@@ -1489,7 +1648,6 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+@@ -1489,7 +1652,6 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
  	    int i = 0;
  	    int cnt = 0;
  	    int pos = 0;
@@ -760,7 +880,18 @@
  
  	    if (!track->ipod_path) {
  		continue;
-@@ -1556,12 +1714,18 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+@@ -1528,8 +1690,8 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+ 	    sqlite3_bind_int(stmt, ++idx, track->filetype_marker);
+ 	    /* kind_id, should match track->mediatype */
+ 	    sqlite3_bind_int(stmt, ++idx, track->mediatype);
+-	    /* date_created */
+-	    sqlite3_bind_int(stmt, ++idx, timeconv(track->time_modified));
++	    /* date_created: the date added on nano 6G/7G, as iTunes writes it */
++	    sqlite3_bind_int(stmt, ++idx, timeconv(utc_dates ? track->time_added : track->time_modified));
+ 	    /* file_size */
+ 	    sqlite3_bind_int(stmt, ++idx, track->size);
+ #if 0
+@@ -1556,12 +1718,18 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
  		free(ipod_path);
  		ipod_path = NULL;
  	    }
@@ -780,7 +911,7 @@
  
      res = 0;
      printf("[%s] done.\n", __func__);
-@@ -1752,7 +1916,28 @@ static void sqlite_func_iphone_sort_section(sqlite3_context *context, int argc,
+@@ -1752,7 +1920,28 @@ static void sqlite_func_iphone_sort_section(sqlite3_context *context, int argc,
  	sqlite3_result_int(context, res);
  }
  
@@ -810,7 +941,7 @@
  {
      plist_t plist_node = NULL;
      plist_t ppc_dict = NULL;
-@@ -1760,6 +1945,8 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+@@ -1760,6 +1949,8 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
      const gchar *otherdbs[] = {"Dynamic.itdb", "Extras.itdb", "Genius.itdb", "Locations.itdb", NULL};
      int res;
      sqlite3 *db = NULL;
@@ -819,7 +950,7 @@
  
  #ifdef HAVE_LIBIMOBILEDEVICE
      if (itdb_device_is_iphone_family(itdb->device)) {
-@@ -1846,7 +2033,9 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+@@ -1846,7 +2037,9 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
  		plist_dict_next_item(curnode, iter, &key, &subnode);
  		while (subnode) {
  		    unsigned long int intval = strtoul(key, NULL, 0);
@@ -830,7 +961,7 @@
  			user_ver_cmds = subnode;
  			maxver = intval;
  		    }
-@@ -1874,6 +2063,7 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+@@ -1874,6 +2067,7 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
  		    	gchar *attach_str = NULL;
  			char *errmsg = NULL;
  			guint32 i = 0, cnt = 0, ok_cnt = 0;
@@ -838,7 +969,7 @@
  
  			plist_dict_new_iter(sql_cmds, &iter);
  			if (iter) {
-@@ -1900,6 +2090,7 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+@@ -1900,6 +2094,7 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
  
  			if (SQLITE_OK != sqlite3_open((const char*)dbf, &db)) {
  			    fprintf(stderr, "Error opening database '%s': %s\n", dbf, sqlite3_errmsg(db));
@@ -846,7 +977,7 @@
  			    g_free(dbf);
  			    goto leave;
  			}
-@@ -1910,12 +2101,14 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+@@ -1910,12 +2105,14 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
  			while (otherdbs[i]) {
  			    errmsg = NULL;
  			    dbf = g_build_filename(outpath, otherdbs[i], NULL);
@@ -863,7 +994,7 @@
  			    }
  			    if (errmsg) {
  				free(errmsg);
-@@ -1930,28 +2123,39 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+@@ -1930,28 +2127,39 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
  			cnt = plist_array_get_size(user_ver_cmds);
  			printf("[%s] Running %d post process commands now\n", __func__, cnt);
  
@@ -906,7 +1037,7 @@
  			    }
  			}
  			g_hash_table_foreach(sqlcmd_map, free_key_val_strings, NULL);
-@@ -1959,19 +2163,28 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+@@ -1959,19 +2167,28 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
  
  			printf("[%s] %d out of %d post process commands successfully executed\n", __func__, ok_cnt, cnt);
  			/* TODO perhaps we want to roll back when an error has occured ? */
@@ -936,7 +1067,7 @@
      }
     
      printf("[%s] done.\n", __func__);
-@@ -1983,7 +2196,14 @@ leave:
+@@ -1983,7 +2200,14 @@ leave:
      if (plist_node) {
  	plist_free(plist_node);
      }
@@ -952,7 +1083,7 @@
  }
  
  static int cbk_calc_sha1_one_block(FILE *f, unsigned char sha1[20])
-@@ -2167,7 +2387,9 @@ static int build_itdb_files(Itdb_iTunesDB *itdb,
+@@ -2167,7 +2391,9 @@ static int build_itdb_files(Itdb_iTunesDB *itdb,
  	return -1;
      }
  
@@ -963,6 +1094,212 @@
  
      if (!mk_Locations_cbk(itdb, outpath)) {
  	g_set_error (error, ITDB_ERROR, ITDB_ERROR_SQLITE,
+@@ -2250,6 +2476,187 @@ static void rmdir_recursive(gchar *path)
+     g_rmdir(path);
+ }
+ 
++/* SQLite dates are UTC seconds since 2001; 0 is unset, as is the value
++   libgpod used to write for it */
++static time_t sqlite_time(Itdb_iTunesDB *itdb, gint64 date)
++{
++    if (date == 0 || date == -978307200 - (gint64)itdb->tzoffset)
++	return 0;
++    return (time_t)(date + 978307200);
++}
++
++typedef struct {
++    gpointer object;
++    gint64 v[9];
++} DeviceRow;
++
++/* The rows of @sql (a pid and up to nine numbers) from the device's
++   @name whose pid is in @objects. None if @name exists but cannot be read
++   completely; *unreadable is then set, if given. */
++static GArray *read_device_rows(const gchar *itlpdir, const char *name, const char *sql,
++				GHashTable *objects, gboolean *unreadable)
++{
++    gchar *path = g_build_filename(itlpdir, name, NULL);
++    GArray *rows = g_array_new(FALSE, TRUE, sizeof(DeviceRow));
++    sqlite3 *db = NULL;
++    sqlite3_stmt *stmt = NULL;
++    int rc = SQLITE_DONE;
++
++    if (g_file_test(path, G_FILE_TEST_EXISTS)) {
++	rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL);
++	if (rc == SQLITE_OK)
++	    rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
++	while (rc == SQLITE_OK || rc == SQLITE_ROW) {
++	    DeviceRow row = { NULL };
++	    gint64 pid;
++	    int i;
++
++	    rc = sqlite3_step(stmt);
++	    if (rc != SQLITE_ROW)
++		break;
++	    pid = sqlite3_column_int64(stmt, 0);
++	    row.object = g_hash_table_lookup(objects, &pid);
++	    for (i = 1; i < sqlite3_column_count(stmt) && i <= 9; i++)
++		row.v[i - 1] = sqlite3_column_int64(stmt, i);
++	    if (row.object)
++		g_array_append_val(rows, row);
++	}
++	sqlite3_finalize(stmt);
++	sqlite3_close(db);
++    }
++    g_free(path);
++    if (rc != SQLITE_DONE) {
++	g_array_set_size(rows, 0);
++	if (unreadable)
++	    *unreadable = TRUE;
++    }
++    return rows;
++}
++
++/**
++ * itdb_sqlite_read_device_state:
++ *
++ * iPod nano 6G/7G: take over what the device's SQLite files know beyond the
++ * iTunesDB, so that the tracks show and a write keeps it. The firmware
++ * records plays, skips, ratings, bookmarks and whether a track was started
++ * in Dynamic.itdb, and plays and skips in Play Counts as well, which the
++ * parser has added already: counts take the larger total, the rest the
++ * device's value. Dates are
++ * the exact UTC ones the iTunesDB only has as local wall times.
++ */
++G_GNUC_INTERNAL void itdb_sqlite_read_device_state(Itdb_iTunesDB *itdb)
++{
++    GHashTable *tracks, *playlists;
++    GArray *stats, *items, *locations, *containers;
++    GList *lists[2], *gl;
++    gchar *dir, *itlpdir;
++    guint i;
++
++    if (!itdb_get_mountpoint(itdb) || !itdb_device_is_hashab_nano(itdb->device))
++	return;
++    dir = itdb_get_itunes_dir(itdb_get_mountpoint(itdb));
++    if (!dir)
++	return;
++    itlpdir = g_build_filename(dir, "iTunes Library.itlp", NULL);
++    g_free(dir);
++    tracks = g_hash_table_new(g_int64_hash, g_int64_equal);
++    for (gl = itdb->tracks; gl; gl = gl->next)
++	g_hash_table_insert(tracks, &((Itdb_Track *)gl->data)->dbid, gl->data);
++    playlists = g_hash_table_new(g_int64_hash, g_int64_equal);
++    lists[0] = itdb->playlists;
++    lists[1] = itdb->priv->mhsd5_playlists;
++    for (i = 0; i < 2; i++)
++	for (gl = lists[i]; gl; gl = gl->next)
++	    g_hash_table_insert(playlists, &((Itdb_Playlist *)gl->data)->id, gl->data);
++
++    /* only Dynamic.itdb holds data the device recorded; a write must not
++       replace it unread */
++    stats = read_device_rows(itlpdir, "Dynamic.itdb",
++			     "SELECT item_pid, play_count_user, skip_count_user, play_count_recent, "
++			     "skip_count_recent, date_played, date_skipped, user_rating, bookmark_time_ms, "
++			     "has_been_played FROM item_stats;", tracks, &itdb->priv->dynamic_unread);
++    for (i = 0; i < stats->len; i++) {
++	DeviceRow *row = &g_array_index(stats, DeviceRow, i);
++	Itdb_Track *track = row->object;
++	track->playcount = MAX(track->playcount, row->v[0]);
++	track->skipcount = MAX(track->skipcount, row->v[1]);
++	track->recent_playcount = row->v[2];
++	track->recent_skipcount = row->v[3];
++	/* the later date, when Play Counts reported a newer one */
++	track->time_played = MAX(sqlite_time(itdb, row->v[4]), track->priv->reported_played);
++	track->last_skipped = MAX(sqlite_time(itdb, row->v[5]), track->priv->reported_skipped);
++	track->rating = row->v[6];
++	track->bookmark_time = row->v[7];
++	track->priv->device_played = row->v[8] != 0;
++	if (track->priv->device_played)
++	    track->mark_unplayed = 0x01;
++    }
++    items = read_device_rows(itlpdir, "Library.itdb", "SELECT pid, date_modified FROM item;",
++			     tracks, NULL);
++    for (i = 0; i < items->len; i++) {
++	DeviceRow *row = &g_array_index(items, DeviceRow, i);
++	((Itdb_Track *)row->object)->time_modified = sqlite_time(itdb, row->v[0]);
++    }
++    locations = read_device_rows(itlpdir, "Locations.itdb", "SELECT item_pid, date_created FROM location;",
++				 tracks, NULL);
++    for (i = 0; i < locations->len; i++) {
++	DeviceRow *row = &g_array_index(locations, DeviceRow, i);
++	((Itdb_Track *)row->object)->time_added = sqlite_time(itdb, row->v[0]);
++    }
++    containers = read_device_rows(itlpdir, "Library.itdb", "SELECT pid, date_created FROM container;",
++				  playlists, NULL);
++    for (i = 0; i < containers->len; i++) {
++	DeviceRow *row = &g_array_index(containers, DeviceRow, i);
++	((Itdb_Playlist *)row->object)->timestamp = sqlite_time(itdb, row->v[0]);
++    }
++
++    g_array_free(stats, TRUE);
++    g_array_free(items, TRUE);
++    g_array_free(locations, TRUE);
++    g_array_free(containers, TRUE);
++    g_hash_table_destroy(tracks);
++    g_hash_table_destroy(playlists);
++    g_free(itlpdir);
++}
++
++/* iPod nano 6G/7G: keep the audio and subtitle track choices the device
++   recorded for items still in the library; the post-process commands
++   reset them. */
++static int keep_device_choices(Itdb_iTunesDB *itdb, const char *outpath, const char *itlpdir,
++			       GError **error)
++{
++    gchar *device_file = g_build_filename(itlpdir, "Dynamic.itdb", NULL);
++    gchar *dbf = g_build_filename(outpath, "Dynamic.itdb", NULL);
++    sqlite3 *db = NULL;
++    int res = 0;
++
++    if (itdb->priv->dynamic_unread) {
++	g_set_error(error, ITDB_ERROR, ITDB_ERROR_SQLITE,
++		    "'%s' could not be read when the library was opened, so writing would lose "
++		    "the plays, ratings and bookmarks it holds; remove it to write without them",
++		    device_file);
++	res = -1;
++    } else if (g_file_test(device_file, G_FILE_TEST_EXISTS)) {
++	/* The columns are unqualified: one that the device's item_stats
++	   lacks names the new row's own, which keeps its value. */
++	char *sql = sqlite3_mprintf("ATTACH DATABASE %Q AS device;"
++	    "UPDATE item_stats SET (audio_language, subtitle_language, audio_track_id, subtitle_track_id) = "
++	    "(SELECT audio_language, subtitle_language, audio_track_id, subtitle_track_id "
++	    "FROM device.item_stats d WHERE d.item_pid = item_stats.item_pid) "
++	    "WHERE item_pid IN (SELECT item_pid FROM device.item_stats);", device_file);
++	if (sqlite3_open(dbf, &db) != SQLITE_OK || sqlite3_exec(db, sql, NULL, NULL, NULL) != SQLITE_OK) {
++	    g_set_error(error, ITDB_ERROR, ITDB_ERROR_SQLITE,
++			"cannot keep the track choices in '%s': %s", device_file, sqlite3_errmsg(db));
++	    res = -1;
++	}
++	sqlite3_free(sql);
++	sqlite3_close(db);
++    }
++    g_free(device_file);
++    g_free(dbf);
++    return res;
++}
++
+ int itdb_sqlite_generate_itdbs(FExport *fexp)
+ {
+     int res = 0;
+@@ -2277,6 +2684,7 @@ int itdb_sqlite_generate_itdbs(FExport *fexp)
+     g_assert(fexp->itdb->playlists != NULL);
+ 
+     tzoffset = fexp->itdb->tzoffset;
++    utc_dates = itdb_device_is_hashab_nano(fexp->itdb->device);
+ 
+     tmpdir = g_build_path(g_get_tmp_dir(), tmpnam(NULL), NULL);
+     if (g_mkdir(tmpdir, 0755) != 0) {
+@@ -2289,7 +2697,8 @@ int itdb_sqlite_generate_itdbs(FExport *fexp)
+ 
+     /* generate itdb files in temporary directory */
+     if (build_itdb_files(fexp->itdb, fexp->albums, fexp->artists, fexp->composers, tmpdir,
+-		     itdb_device_get_uuid(fexp->itdb->device), &fexp->error) != 0) {
++		     itdb_device_get_uuid(fexp->itdb->device), &fexp->error) != 0
++	|| (utc_dates && keep_device_choices(fexp->itdb, tmpdir, itlpdir, &fexp->error) != 0)) {
+ 	g_prefix_error (&fexp->error, "Failed to generate sqlite database: ");
+ 	res = -1;
+ 	goto leave;
 --- a/src/Makefile.am
 +++ b/src/Makefile.am
 @@ -31,6 +31,33 @@ libgpod_la_CFLAGS =

@@ -10,6 +10,7 @@ import sqlite3
 import struct
 import subprocess
 import tempfile
+import time
 import unittest
 import zlib
 
@@ -17,7 +18,12 @@ from build import build, ROOT
 from probe import HashAB, guid_bytes, verify_cbk, verify_cdb
 
 CAPTURE = ROOT.parents[1] / "docs/sysinfo-captures/nano-7g-16gb-usb.xml"
+MAC_EPOCH = 2082844800
+CORE_DATA_EPOCH = 978307200
+# The synthetic track's dates (libgpod-roundtrip.c)
+MODIFIED, ADDED = 1784116800, 1768478400
 POST_PROCESS = "com.apple.mobile.iTunes.SQLMusicLibraryPostProcessCommands"
+TRACK_CHOICES = "audio_language, subtitle_language, audio_track_id, subtitle_track_id"
 # Firmware categories as iTunes writes them for a nano 7G: distinguished_kind
 # (mhyp +0x52) -> (+0x50, rule 1 mask, rule 2 action, rule 2 mask).
 CATEGORIES = {
@@ -45,6 +51,20 @@ def rows(path, sql, params=()):
 
 def columns(path, table):
     return {row[1] for row in rows(path, f"PRAGMA table_info({table})")}
+
+
+def host_offset(tz):
+    """Seconds east of UTC of the zone tz now, as libgpod's host time conversion uses it."""
+    saved = os.environ.get("TZ")
+    os.environ["TZ"] = tz
+    time.tzset()
+    offset = time.localtime().tm_gmtoff
+    if saved is None:
+        del os.environ["TZ"]
+    else:
+        os.environ["TZ"] = saved
+    time.tzset()
+    return offset
 
 
 def category_slst(kind):
@@ -165,9 +185,9 @@ class LibgpodRoundtripTests(unittest.TestCase):
         (self.control / "Device/SysInfoExtended").write_bytes(plistlib.dumps(properties))
         (self.control / "Device/SysInfo").write_text(f"ModelNumStr: {model}\n")
 
-    def run_helper(self, operation, success=True, preexec_fn=None):
-        result = subprocess.run([str(self.helper), str(self.mount), operation],
-                                capture_output=True, text=True, preexec_fn=preexec_fn)
+    def run_helper(self, operation, success=True, preexec_fn=None, tz="Europe/Berlin"):
+        result = subprocess.run([str(self.helper), str(self.mount), operation], capture_output=True,
+                                text=True, preexec_fn=preexec_fn, env=dict(os.environ, TZ=tz))
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         else:
@@ -392,6 +412,166 @@ class LibgpodRoundtripTests(unittest.TestCase):
         self.assertEqual(rows(library, "PRAGMA user_version"), [(0,)])
         self.assertEqual(rows(self.db("Genius"), "PRAGMA user_version"), [(0,)])
         self.assertEqual(rows(library, "SELECT major, minor FROM version_info"), [(2, 48)])
+
+    def stats(self, columns="play_count_user, play_count_recent, play_count_user_original", pid=None):
+        return rows(self.db("Dynamic"), f"SELECT item_pid, {columns} FROM item_stats "
+                                        "WHERE ? IS NULL OR item_pid = ? ORDER BY item_pid", (pid, pid))
+
+    def set_stats(self, values, pid=None):
+        """What the firmware records in Dynamic.itdb."""
+        with contextlib.closing(sqlite3.connect(self.db("Dynamic"))) as db, db:
+            db.execute(f"UPDATE item_stats SET {values} WHERE ? IS NULL OR item_pid = ?", (pid, pid))
+
+    def cdb_track(self, offset, size="<I"):
+        """A field of the first track in the iTunesCDB."""
+        _, data = read_cdb(self.control / "iTunes/iTunesCDB")
+        return struct.unpack_from(size, data, cdb_records(data, 1, b"mhit")[0][0] + offset)[0]
+
+    def tzoffset(self):
+        return struct.unpack_from("<i", read_cdb(self.control / "iTunes/iTunesCDB")[1], 0x6C)[0]
+
+    def write_play_counts(self, plays, played, skips=0, skipped=0):
+        """The firmware's report: one 0x28-byte entry per track, dates with the CDB's offset."""
+        entry = struct.pack("<IIIIIII", plays, played, 0, 0, 0, skips, skipped) + bytes(12)
+        (self.control / "iTunes/Play Counts").write_bytes(
+            b"mhdp" + struct.pack("<III", 0x60, 0x28, 1) + bytes(0x50) + entry)
+
+    def test_nano_7_plays_count_once(self):
+        # Plays only in Dynamic.itdb count; a play in Dynamic.itdb and in
+        # Play Counts (count - *_original) counts once, also on the next write.
+        self.setup_nano()
+        self.run_helper("create")
+        self.set_stats("play_count_user = 5, play_count_recent = 5")
+        self.run_helper("resave")
+        (pid, *_), = self.stats()
+        self.assertEqual(self.stats(), [(pid, 5, 5, 5)])
+        played = MODIFIED + 3600
+        self.set_stats(f"play_count_user = 7, play_count_recent = 7, date_played = {played - CORE_DATA_EPOCH}")
+        self.write_play_counts(2, played + MAC_EPOCH + self.tzoffset())
+        for _ in range(2):
+            self.run_helper("resave")
+            self.assertEqual(self.stats(), [(pid, 7, 7, 7)])
+            self.assertEqual(self.stats("date_played"), [(pid, played - CORE_DATA_EPOCH)])
+            self.assertEqual(self.cdb_track(0x50), 7)
+            self.assertFalse((self.control / "iTunes/Play Counts").exists())
+
+    def test_nano_7_play_counts_dates(self):
+        # Without a Dynamic.itdb row, the Play Counts dates are the track's, in
+        # Dynamic.itdb and in the iTunesCDB (which stores the host's local time);
+        # 0 and "none" set no date.
+        self.setup_nano()
+        offset = host_offset("Europe/Berlin")
+        played, skipped = MODIFIED + 3600, MODIFIED + 7200
+        for case in ("dates", "zero and none"):
+            with self.subTest(case):
+                self.run_helper("create")
+                self.db("Dynamic").unlink()
+                fixed = MAC_EPOCH + self.tzoffset()
+                if case == "dates":
+                    report, dates = (played + fixed, skipped + fixed), (played, skipped)
+                else:
+                    report, dates = (0, CORE_DATA_EPOCH + fixed), (0, 0)
+                self.write_play_counts(1, report[0], 1, report[1])
+                self.run_helper("resave")
+                self.assertEqual(self.stats("date_played, date_skipped")[0][1:],
+                                 tuple(date and date - CORE_DATA_EPOCH for date in dates))
+                self.assertEqual((self.cdb_track(0x58), self.cdb_track(0xA0)),
+                                 tuple(date and date + MAC_EPOCH + offset for date in dates))
+
+    def test_nano_7_later_reported_date_wins(self):
+        # Dynamic.itdb and Play Counts report the same activity; where their
+        # dates differ, the later one is kept.
+        self.setup_nano()
+        self.run_helper("create")
+        older, newer = MODIFIED, MODIFIED + 3600
+        self.set_stats(f"play_count_user = 1, date_played = {newer - CORE_DATA_EPOCH}, "
+                       "skip_count_user = 1, date_skipped = 0")
+        fixed = MAC_EPOCH + self.tzoffset()
+        self.write_play_counts(1, older + fixed, 1, newer + fixed)
+        self.run_helper("resave")
+        self.assertEqual(self.stats("date_played, date_skipped")[0][1:],
+                         (newer - CORE_DATA_EPOCH, newer - CORE_DATA_EPOCH))
+
+    def test_nano_7_keeps_device_activity(self):
+        self.setup_nano()
+        self.run_helper("create")
+        self.run_helper("add")
+        first, second = (rows(self.db("Library"), "SELECT pid FROM item WHERE title = ?", (title,))[0][0]
+                         for title in ("Synthetic track", "Second track"))
+        defaults = self.stats(TRACK_CHOICES, second)
+        self.assertEqual(self.stats("has_been_played", second), [(second, 0)])
+        self.set_stats(f"skip_count_user = 2, skip_count_recent = 2, user_rating = 80, "
+                       f"bookmark_time_ms = 2000, date_skipped = {MODIFIED - CORE_DATA_EPOCH}, "
+                       "audio_language = 5, subtitle_language = 6, audio_track_id = 3, "
+                       "subtitle_track_id = 4, has_been_played = 1", first)
+        # The firmware marks a track as played when it is started, without
+        # a count.
+        self.set_stats("has_been_played = 1", second)
+        columns = "skip_count_user, skip_count_recent, user_rating, bookmark_time_ms, date_skipped, "
+        expected = self.stats(columns + TRACK_CHOICES + ", has_been_played")
+        for _ in range(2):
+            self.run_helper("resave")
+            self.assertEqual(self.stats(columns + TRACK_CHOICES + ", has_been_played"), expected)
+        # The iTunesCDB has the device's rating, bookmark and played mark,
+        # and the other item keeps its own track choices.
+        self.assertEqual((self.cdb_track(0x1F, "<B"), self.cdb_track(0x6C), self.cdb_track(0xB2, "<B")),
+                         (80, 2000, 1))
+        self.assertEqual(self.stats(TRACK_CHOICES, second), defaults)
+        # Host edits win, also clearing to zero; the track choices stay.
+        self.run_helper("rate")
+        self.assertEqual(self.stats("user_rating, bookmark_time_ms", first), [(first, 60, 3000.0)])
+        self.run_helper("clear")
+        self.assertEqual(self.stats(columns + TRACK_CHOICES + ", has_been_played", first),
+                         [(first, 0, 0, 0, 0.0, 0, 5, 6, 3, 4, 1)])
+        self.assertEqual((self.cdb_track(0x1F, "<B"), self.cdb_track(0x6C)), (0, 0))
+        self.set_stats("play_count_user = 4", second)
+        self.run_helper("delete")
+        self.assertEqual(self.stats(), [(second, 4, 0, 4)])
+        self.assertEqual(self.stats("has_been_played"), [(second, 1)])
+
+    def test_nano_7_dynamic_without_track_choices(self):
+        # A Dynamic.itdb without the track choice columns has none to keep.
+        self.setup_nano()
+        self.run_helper("create")
+        with contextlib.closing(sqlite3.connect(self.db("Dynamic"))) as db:
+            for column in TRACK_CHOICES.split(", "):
+                db.execute(f"ALTER TABLE item_stats DROP COLUMN {column}")
+        self.run_helper("resave")
+        self.assertEqual(len(self.stats(TRACK_CHOICES)), 1)
+
+    def test_nano_7_dates_are_utc(self):
+        # SQLite dates are exact UTC, whatever the host's time zone; unset
+        # ones are 0, also where libgpod used to write -978307200 - offset.
+        zones = ("Europe/Berlin", "UTC", "America/Los_Angeles", "Asia/Kolkata")
+        if len({host_offset(tz) for tz in zones}) < len(zones):
+            self.skipTest("the host has no time zone data")
+        self.setup_nano()
+        self.run_helper("create")
+        self.set_stats(f"date_skipped = {-CORE_DATA_EPOCH - self.tzoffset()}")
+        playlists = rows(self.db("Library"), "SELECT pid, date_created FROM container ORDER BY pid")
+        for tz in zones:
+            with self.subTest(tz):
+                self.run_helper("resave", tz=tz)
+                self.assertEqual(rows(self.db("Library"), "SELECT date_modified FROM item")
+                                 + rows(self.db("Locations"), "SELECT date_created FROM location")
+                                 + rows(self.db("Dynamic"), "SELECT date_played, date_skipped FROM item_stats"),
+                                 [(MODIFIED - CORE_DATA_EPOCH,), (ADDED - CORE_DATA_EPOCH,), (0, 0)])
+                self.assertEqual(rows(self.db("Library"), "SELECT pid, date_created FROM container "
+                                                          "ORDER BY pid"), playlists)
+        # An unset date added stays unset instead of becoming the date modified.
+        with contextlib.closing(sqlite3.connect(self.db("Locations"))) as db, db:
+            db.execute("UPDATE location SET date_created = 0")
+        self.run_helper("resave")
+        self.assertEqual(rows(self.db("Locations"), "SELECT date_created FROM location"), [(0,)])
+
+    def test_nano_7_unreadable_dynamic_is_not_replaced(self):
+        self.setup_nano()
+        self.run_helper("create")
+        self.db("Dynamic").write_bytes(b"not a database" * 100)
+        before = {path.name: path.read_bytes() for path in self.bundle.iterdir()}
+        result = self.run_helper("resave", success=False)
+        self.assertIn("Dynamic.itdb", result.stderr)
+        self.assertEqual({path.name: path.read_bytes() for path in self.bundle.iterdir()}, before)
 
     def test_invalid_or_ios_guid_is_rejected(self):
         for guid in ("", "0123456789ABCDEG", "0123456789ABCDE", "01" * 20):

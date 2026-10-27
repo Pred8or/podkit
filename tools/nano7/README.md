@@ -53,6 +53,18 @@ command, or an insert or commit that fails while the databases are generated
 fails the write and leaves the library unchanged. A nano 5th generation keeps
 libgpod's previous layout.
 
+A write keeps what a nano 6th/7th generation recorded in `Dynamic.itdb`.
+Plays, skips, ratings, bookmarks, recent counts and their dates become the
+tracks' values when the library is opened, so changes the host makes
+afterwards win; a play reported in both `Dynamic.itdb` and `Play Counts`
+counts once, and where their dates differ the later one is kept. The chosen
+audio and subtitle tracks, which libgpod does not represent, are carried over
+for the items that remain. SQLite dates are exact UTC whatever the host's time
+zone, and an unset one is 0; exact item and playlist dates need a readable
+`Library.itdb` and `Locations.itdb`, otherwise the `iTunesCDB`'s local times
+are used. A `Dynamic.itdb` that cannot be read stops the write. The checks
+cover these cases.
+
 ## Checking a copied device library
 
 A nano 7th generation synced by macOS carries no `SysInfoExtended` file, so

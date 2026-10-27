@@ -1,7 +1,9 @@
 /* Create, resave or delete one synthetic track with libgpod, add a second
  * one, a movie (add), give the first a 1 MiB comment (grow) or the second
- * playlist the master playlist's id (clash).
- * Usage: libgpod-roundtrip <temporary mountpoint> create|resave|delete|add|grow|clash */
+ * playlist the master playlist's id (clash), set the first one's rating to 60
+ * and bookmark to 3000 ms (rate) or clear its play data (clear).
+ * Usage: libgpod-roundtrip <temporary mountpoint>
+ *        create|resave|delete|add|grow|clash|rate|clear */
 #include <gpod/itdb.h>
 #include <string.h>
 
@@ -33,6 +35,8 @@ int main(int argc, char **argv)
         track->bitrate = 128;
         track->size = 32000;
         track->transferred = TRUE;
+        track->time_modified = 1784116800; /* 2026-07-15 12:00 UTC */
+        track->time_added = 1768478400;    /* 2026-01-15 12:00 UTC */
         itdb_track_add(db, track, -1);
         itdb_playlist_add_track(master, track, -1);
         master = itdb_playlist_new("Test playlist", FALSE);
@@ -70,6 +74,15 @@ int main(int argc, char **argv)
             track->comment = g_strnfill(1 << 20, 'x');
         } else if (strcmp(argv[2], "clash") == 0) {
             ((Itdb_Playlist *)g_list_last(db->playlists)->data)->id = itdb_playlist_mpl(db)->id;
+        } else if (strcmp(argv[2], "rate") == 0) {
+            track->rating = 60;
+            track->bookmark_time = 3000;
+        } else if (strcmp(argv[2], "clear") == 0) {
+            track->playcount = track->skipcount = 0;
+            track->recent_playcount = track->recent_skipcount = 0;
+            track->time_played = track->last_skipped = 0;
+            track->rating = 0;
+            track->bookmark_time = 0;
         } else if (strcmp(argv[2], "resave") != 0) {
             return 2;
         }
