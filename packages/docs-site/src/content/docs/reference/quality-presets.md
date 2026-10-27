@@ -52,9 +52,7 @@ For a 4-minute song:
 
 VBR file sizes vary based on content complexity. CBR sizes are exact.
 
-### Custom Bitrate
-
-`customBitrate` (config, per device, `PODKIT_CUSTOM_BITRATE`, or `--custom-bitrate` for one run) replaces the preset's bitrate with any value from 64 to 320 kbps. It is the cap for every lossy target, including lossy reduction of MP3/AAC sources when `[bitrate].reduce` converts. See [Custom Bitrate](/user-guide/transcoding/audio#custom-bitrate).
+For a bitrate below `low`, see [Custom Bitrate](/user-guide/transcoding/audio#custom-bitrate).
 
 ### VBR vs CBR
 
@@ -88,6 +86,7 @@ Notes:
 
   One limit remains: 64 kbps is the lowest rate this encoder offers for stereo, so a target below that cannot be honoured on macOS.
 
+- MP3 output (when the [codec preference](/user-guide/transcoding/codec-preferences) resolves to MP3) uses LAME's `-q:a` quality scale for a plain preset. When a numeric cap applies — a `customBitrate` or a lossy reduction target — podkit switches LAME to average-bitrate mode (`-abr 1 -b:a`) with that bitrate as the target average, because `-q:a` has no bitrate bound; the sync tag records the target as the track's bitrate. ABR holds the average, so short passages can run above it. `encoding = "cbr"` uses `-b:a` as before.
 - Below 128 kbps the encoders differ most in quality. `aac_at` is the best of the three there; FFmpeg's native `aac` is clearly weaker at 96 kbps, so a low custom bitrate is best encoded on macOS or with `libfdk_aac`.
 
 ## Video Presets

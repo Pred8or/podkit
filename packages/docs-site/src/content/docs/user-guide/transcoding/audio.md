@@ -67,7 +67,7 @@ customBitrate = 96
 reduce = "always"   # also re-encode MP3/AAC sources above the cap
 ```
 
-`customBitrate` replaces the preset's bitrate everywhere the preset's bitrate would apply, so it is the cap for every lossy target:
+`customBitrate` replaces the preset's bitrate everywhere the preset's bitrate would apply, so it is the cap for every lossy target (for MP3 output it is the target average of LAME's ABR mode, which can briefly run above it; see [Encoder Mapping](/reference/quality-presets#encoder-mapping)):
 
 - **Lossless sources** (FLAC, WAV, ALAC) are transcoded to AAC at the custom bitrate. With `max` on a device that plays ALAC, lossless sources still become ALAC and the custom bitrate only applies to lossy targets.
 - **Incompatible lossy sources** (OGG, Opus) are transcoded at no more than the custom bitrate.
@@ -185,7 +185,6 @@ A few details worth knowing:
 | **high** | ~256 kbps | ~7.5 MB |
 | **medium** | ~192 kbps | ~5.6 MB |
 | **low** | ~128 kbps | ~3.8 MB |
-| `customBitrate = 96` | ~96 kbps | ~2.9 MB |
 
 VBR file sizes vary based on content complexity. CBR sizes are exact. The `max` preset produces ALAC (lossless) on devices that support it, otherwise AAC at the same quality as `high`.
 
