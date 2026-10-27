@@ -2744,6 +2744,51 @@ describe('extended tag fields (composer, grouping, totals, sort)', () => {
     expect(planWith(src, reencoded)).toEqual([]);
   });
 
+  test('a pending tag correction and Sound Check converge together with a transform apply', () => {
+    const handler = createMusicHandler(
+      makeConfig({
+        transforms: {
+          cleanArtists: { enabled: true, drop: false, format: 'feat. {}', ignore: [] },
+        },
+      })
+    );
+    const planWith = (src: CollectionTrack, dev: DeviceTrack) =>
+      createSyncPlanner(handler).plan(createSyncDiffer(handler).diff([src], [dev])).operations;
+    const normalization = {
+      source: 'replaygain-track' as const,
+      trackGain: -6,
+      soundcheckValue: 2512,
+    };
+    const src = source({
+      artist: 'Artist feat. Guest',
+      title: 'Song',
+      composer: 'Bach',
+      normalization,
+    });
+
+    const ops = planWith(
+      src,
+      device({ storesExtendedTags: true, artist: 'Artist feat. Guest', title: 'Song' })
+    );
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as Extract<MusicOperation, { type: 'update-metadata' }>;
+    expect(op.metadata).toMatchObject({
+      artist: 'Artist',
+      title: 'Song (feat. Guest)',
+      composer: 'Bach',
+    });
+    expect(op.metadata.normalization).toBeDefined();
+
+    const applied = device({
+      storesExtendedTags: true,
+      artist: 'Artist',
+      title: 'Song (feat. Guest)',
+      composer: 'Bach',
+      normalization,
+    });
+    expect(planWith(src, applied)).toEqual([]);
+  });
+
   test('a device that does not store them is never flagged for them', () => {
     expect(plan(source({ sortArtist: 'Band, The', composer: 'Bach' }), device())).toEqual([]);
   });

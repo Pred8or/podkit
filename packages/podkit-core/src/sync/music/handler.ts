@@ -266,13 +266,23 @@ export class MusicHandler implements ContentTypeHandler<
     if (matchInfo) {
       const hasTransform = this.generateMatchKey(source) !== this.applyTransformKey(source);
       if (hasTransform) {
+        // A metadata correction or Sound Check update pending on the same
+        // track rides along with the transform's metadata update.
+        const withCorrection = (reason: UpdateReason): UpdateReason[] => [
+          reason,
+          ...detectUpgrades(source, device).filter(
+            (r) =>
+              r === 'metadata-correction' ||
+              (r === 'normalization-update' && this.config.audioNormalization !== 'none')
+          ),
+        ];
         if (!matchInfo.matchedByTransformKey && this.config.transformsEnabled) {
           // iPod has original metadata, transforms are enabled -> apply
-          return ['transform-apply'];
+          return withCorrection('transform-apply');
         }
         if (matchInfo.matchedByTransformKey && !this.config.transformsEnabled) {
           // iPod has transformed metadata, transforms are disabled -> remove
-          return ['transform-remove'];
+          return withCorrection('transform-remove');
         }
       }
     }
