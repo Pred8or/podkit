@@ -61,6 +61,11 @@ export interface CollectionTrack {
   compilation?: boolean;
   duration?: number; // milliseconds
   composer?: string;
+  /**
+   * The separate composer values `composer` was joined from, when the source
+   * has several. Used only to write file tags without merging the values.
+   */
+  composers?: readonly string[];
   grouping?: string;
   totalTracks?: number;
   totalDiscs?: number;

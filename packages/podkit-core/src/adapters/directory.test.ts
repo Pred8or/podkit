@@ -118,6 +118,7 @@ describe('DirectoryAdapter', () => {
 
       const [track] = await newAdapter({ path: '/music' }).getItems();
       expect(track!.composer).toBe('John Lennon, Paul McCartney');
+      expect(track!.composers).toEqual(['John Lennon', 'Paul McCartney']);
       expect(track!.grouping).toBeUndefined();
       expect(track!.sortTitle).toBeUndefined();
       expect(track!.totalTracks).toBeUndefined();

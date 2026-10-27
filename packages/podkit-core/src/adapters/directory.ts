@@ -121,6 +121,29 @@ function joinTagValues(values: string[] | undefined): string | undefined {
   return parts.length > 0 ? parts.join(', ') : undefined;
 }
 
+/**
+ * iTunes stores grouping in an ID3 GRP1 frame and the work title in TIT1;
+ * music-metadata maps both to `grouping`. A GRP1 frame, when present, is the
+ * grouping, even empty (a cleared grouping keeps one, so TIT1 never takes
+ * its place).
+ */
+function itunesGrouping(
+  native: Record<string, Array<{ id: string; value: unknown }>> | undefined
+): string | undefined {
+  for (const [format, frames] of Object.entries(native ?? {})) {
+    if (!format.startsWith('ID3v2')) continue;
+    const grp1 = frames.find((f) => f.id === 'GRP1');
+    if (grp1 && typeof grp1.value === 'string') return grp1.value;
+  }
+  return undefined;
+}
+
+/** The non-blank values of a multi-value tag, when there are several. */
+function multipleTagValues(values: string[] | undefined): string[] | undefined {
+  const parts = values?.map((v) => v.trim()).filter((v) => v.length > 0) ?? [];
+  return parts.length > 1 ? parts : undefined;
+}
+
 /** A text tag, unset when blank. */
 function tagText(value: string | undefined): string | undefined {
   return value?.trim() ? value : undefined;
@@ -362,7 +385,8 @@ export class DirectoryAdapter implements CollectionAdapter<CollectionTrack, Trac
       compilation: common.compilation ?? undefined,
       duration: format.duration ? Math.floor(format.duration * 1000) : undefined,
       composer: joinTagValues(common.composer),
-      grouping: tagText(common.grouping),
+      composers: multipleTagValues(common.composer),
+      grouping: tagText(itunesGrouping(metadata.native) ?? common.grouping),
       totalTracks: common.track?.of ?? undefined,
       totalDiscs: common.disk?.of ?? undefined,
       sortTitle: tagText(common.titlesort),

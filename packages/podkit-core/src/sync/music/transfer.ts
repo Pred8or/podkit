@@ -49,6 +49,7 @@ function toDeviceTrackInput(track: CollectionTrack): DeviceTrackInput {
     discNumber: track.discNumber,
     compilation: track.compilation,
     composer: track.composer,
+    composers: track.composers,
     grouping: track.grouping,
     totalTracks: track.totalTracks,
     totalDiscs: track.totalDiscs,
@@ -106,6 +107,16 @@ export class MusicTransferOps {
       ...(bitrate !== undefined && { bitrate }),
       transferMode: ctx.transferMode,
     };
+
+    // A portable file is re-tagged from this input, and the copied file may
+    // still carry a value the source reports as empty: clear it explicitly.
+    if (ctx.transferMode === 'portable') {
+      for (const field of reportedExtendedFields(source)) {
+        if (trackInput[field] === undefined) {
+          Object.assign(trackInput, { [field]: clearedExtendedValue(field) });
+        }
+      }
+    }
 
     // Write sync tag for transcode operations
     if (operation.type === 'add-transcode' && operation.preset) {
@@ -331,7 +342,7 @@ export class MusicTransferOps {
     // Only devices that store the extended fields get them, and fields the
     // source reports but no longer has are cleared, so the replacement leaves
     // nothing stale. Elsewhere (mass-storage) the replacement file carries
-    // the source's own tags.
+    // the source's own tags; rewriting them would only merge multi-value ones.
     if (foundTrack.storesExtendedTags) {
       const reported = reportedExtendedFields(source);
       for (const field of EXTENDED_TAG_FIELDS) {
@@ -339,6 +350,7 @@ export class MusicTransferOps {
           source[field] ?? (reported.includes(field) ? clearedExtendedValue(field) : undefined);
         if (value !== undefined) (updateFields as Record<string, unknown>)[field] = value;
       }
+      if (source.composers && updateFields.composer) updateFields.composers = source.composers;
     }
 
     // Request ReplayGain tag writes for transcoded/optimized-copy upgrades.

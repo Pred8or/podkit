@@ -143,7 +143,10 @@ Why iPod portable is a separate case: the iPod's firmware plays from
 the iTunesDB and never looks at file tags during playback, but a user
 who copies files off the device (recovery, ripping back to a library)
 needs the file to be self-describing. `portable` opts into that extra
-write at the cost of a small per-track tag-write.
+write at the cost of a small per-track tag-write. The file tags carry
+the same fields as the iTunesDB, including composer, grouping,
+track/disc totals and the sort fields; a field cleared at the source is
+removed from the file too.
 
 After upgrading from a podkit version that did not write file tags,
 the first sync on an existing mass-storage device will likely show a

@@ -1317,6 +1317,9 @@ export class MusicPipeline implements SyncExecutor {
       const value = metadata[field];
       if (value !== undefined) (updateFields as Record<string, unknown>)[field] = value;
     }
+    if (updateFields.composer && operation.source?.composers) {
+      updateFields.composers = operation.source.composers;
+    }
     if (metadata.normalization !== undefined) {
       updateFields.normalization = metadata.normalization;
     }

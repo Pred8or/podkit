@@ -36,6 +36,8 @@ export interface DeviceTrackInput {
   albumArtist?: string;
   genre?: string;
   composer?: string;
+  /** Separate composer values for file tags; see `CollectionTrack.composers`. */
+  composers?: readonly string[];
   comment?: string;
   grouping?: string;
   sortTitle?: string;

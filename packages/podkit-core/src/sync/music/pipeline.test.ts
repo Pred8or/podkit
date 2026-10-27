@@ -2619,6 +2619,42 @@ describe('upgrade operations - execution', () => {
     expect(fields).not.toHaveProperty('grouping');
   });
 
+  it("a mass-storage replacement leaves the copied file's extended tags alone", async () => {
+    const existingTrack = createDeviceTrack('Artist', 'Song', 'Album', {
+      filePath: 'Music/EXISTING.mp3',
+    });
+    db.getTracks.mockReturnValue([existingTrack]);
+    const plan: SyncPlan = {
+      ...createEmptyPlan(),
+      operations: [
+        {
+          type: 'upgrade-direct-copy',
+          source: createCollectionTrack('Artist', 'Song', 'Album', 'mp3', {
+            lossless: false,
+            composer: 'A, B',
+            composers: ['A', 'B'],
+            sortArtist: 'Artist, The',
+          }),
+          target: existingTrack,
+          reason: 'quality-change',
+        },
+      ],
+    };
+
+    for await (const _p of new MusicPipeline(createDependencies(db, transcoder)).execute(plan, {
+      artwork: false,
+    })) {
+      // iterate
+    }
+
+    const fields = db.updateTrack.mock.calls
+      .map((call) => call[1] as Record<string, unknown>)
+      .find((f) => 'filetype' in f)!;
+    for (const field of ['composer', 'composers', 'sortArtist']) {
+      expect([field, fields[field]]).toEqual([field, undefined]);
+    }
+  });
+
   it('executes upgrade without preset (copy-based quality-change)', async () => {
     const existingTrack = createDeviceTrack('Artist', 'Song', 'Album', {
       filePath: 'Music/EXISTING.m4a',
