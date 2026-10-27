@@ -11,6 +11,8 @@ import { parseSyncTag } from '../../metadata/sync-tags.js';
 import type { FFmpegTranscoder } from '../../transcode/ffmpeg.js';
 import type { DeviceCapabilities } from '@podkit/device-types';
 import { makeMockCollectionTrack, makeMockDeviceTrack } from '../../test-utils/tracks.js';
+import { createSyncDiffer } from '../engine/differ.js';
+import { createSyncPlanner } from '../engine/planner.js';
 
 // =============================================================================
 // Test Fixtures
@@ -2589,5 +2591,107 @@ describe('postProcessSyncTagsTranscode (--force-sync-tags-transcode)', () => {
     // Re-encode (quality-change), NOT the tag-only sync-tag-write path.
     expect(diff.toUpdate[0]!.reasons).toContain('quality-change');
     expect(diff.toUpdate[0]!.reasons).not.toContain('sync-tag-write');
+  });
+});
+
+describe('extended tag fields (composer, grouping, totals, sort)', () => {
+  // A copied MP3 already in sync on audio, so only tag fields can differ.
+  const source = (overrides: Partial<CollectionTrack> = {}) =>
+    makeCollectionTrack({
+      fileType: 'mp3',
+      codec: 'mp3',
+      lossless: false,
+      bitrate: 256,
+      filePath: '/music/a.mp3',
+      ...overrides,
+    });
+  const device = (overrides: Partial<DeviceTrack> = {}) =>
+    makeDeviceTrack({
+      filetype: 'MPEG audio file',
+      bitrate: 256,
+      syncTag: parseSyncTag('[podkit:v1 quality=copy transferMode=fast codec=mp3 bitrate=256]'),
+      ...overrides,
+    });
+
+  function plan(src: CollectionTrack, dev: DeviceTrack) {
+    const handler = createMusicHandler(makeConfig());
+    const diff = createSyncDiffer(handler).diff([src], [dev]);
+    return createSyncPlanner(handler).plan(diff).operations;
+  }
+
+  test('a sort tag changed at the source alone plans a metadata update of that field', () => {
+    const ops = plan(
+      source({ sortArtist: 'Band, The' }),
+      device({ storesExtendedTags: true, sortArtist: 'The Band' })
+    );
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({
+      type: 'update-metadata',
+      metadata: { sortArtist: 'Band, The' },
+    });
+  });
+
+  test('tags removed at the source clear them on the device', () => {
+    const ops = plan(
+      source(),
+      device({ storesExtendedTags: true, sortAlbum: 'Album, The', composer: 'X', totalTracks: 12 })
+    );
+    expect(ops).toHaveLength(1);
+    expect((ops[0] as Extract<MusicOperation, { type: 'update-metadata' }>).metadata).toEqual({
+      composer: '',
+      totalTracks: 0,
+      sortAlbum: '',
+    });
+  });
+
+  test('a case-only fix of an extended field is an update; of genre it is not', () => {
+    const ops = plan(
+      source({ composer: 'Bach', genre: 'Classical' }),
+      device({ storesExtendedTags: true, composer: 'bach', genre: 'classical' })
+    );
+    expect(ops).toHaveLength(1);
+    expect((ops[0] as Extract<MusicOperation, { type: 'update-metadata' }>).metadata).toEqual({
+      composer: 'Bach',
+    });
+  });
+
+  test('matching tags plan nothing', () => {
+    const tags = { composer: 'Bach', grouping: 'G', totalDiscs: 2, sortComposer: 'Bach, J. S.' };
+    expect(plan(source(tags), device({ storesExtendedTags: true, ...tags }))).toEqual([]);
+  });
+
+  test('fields the source cannot report are neither compared nor cleared', () => {
+    const populated = {
+      storesExtendedTags: true,
+      composer: 'Bach',
+      grouping: 'Cantatas',
+      totalTracks: 12,
+      sortAlbum: 'Album, The',
+    } as const;
+    const subsonicLike = source({
+      unreportedTagFields: ['grouping', 'totalTracks', 'totalDiscs', 'sortAlbum'],
+      composer: 'Bach',
+    });
+    expect(plan(subsonicLike, device(populated))).toEqual([]);
+  });
+
+  test('a reported empty value clears the device, and the next sync converges', () => {
+    const src = source({ unreportedTagFields: ['grouping', 'totalTracks', 'totalDiscs'] });
+    const dev = device({ storesExtendedTags: true, composer: 'Bach', grouping: 'Cantatas' });
+    const ops = plan(src, dev);
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as Extract<MusicOperation, { type: 'update-metadata' }>;
+    expect(op.metadata).toEqual({ composer: '' });
+
+    const applied = device({
+      storesExtendedTags: true,
+      grouping: 'Cantatas',
+      composer: op.metadata.composer || undefined,
+    });
+    expect(plan(src, applied)).toEqual([]);
+  });
+
+  test('a device that does not store them is never flagged for them', () => {
+    expect(plan(source({ sortArtist: 'Band, The', composer: 'Bach' }), device())).toEqual([]);
   });
 });

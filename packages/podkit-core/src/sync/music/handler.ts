@@ -19,6 +19,7 @@ import {
   isFileReplacementUpgrade,
   isSourceLossless,
   metadataValuesDiffer,
+  metadataCorrectionFields,
   classifyDeviceBound,
   classifySourceBound,
 } from '../engine/upgrades.js';
@@ -165,6 +166,7 @@ function toCollisionInput(source: CollectionTrack): Omit<CollisionCheckInput, 'f
     album: source.album,
     trackNumber: source.trackNumber,
     discNumber: source.discNumber,
+    totalDiscs: source.totalDiscs,
     year: source.year,
   };
 }
@@ -414,15 +416,7 @@ export class MusicHandler implements ContentTypeHandler<
       } else if (reason === 'metadata-correction') {
         // Build changes for metadata fields that differ
         const changes: MetadataChange[] = [];
-        const metadataFields = [
-          'genre',
-          'year',
-          'trackNumber',
-          'discNumber',
-          'albumArtist',
-          'compilation',
-        ] as const;
-        for (const field of metadataFields) {
+        for (const field of metadataCorrectionFields(update.source, update.device)) {
           const sourceValue = update.source[field as keyof CollectionTrack];
           const ipodValue = update.device[field as keyof DeviceTrack];
           if (metadataValuesDiffer(field, sourceValue, ipodValue)) {
@@ -1169,12 +1163,7 @@ export class MusicHandler implements ContentTypeHandler<
         'title',
         'artist',
         'album',
-        'albumArtist',
-        'genre',
-        'year',
-        'trackNumber',
-        'discNumber',
-        'compilation',
+        ...metadataCorrectionFields(source, device),
       ] as const;
 
       for (const field of allFields) {
