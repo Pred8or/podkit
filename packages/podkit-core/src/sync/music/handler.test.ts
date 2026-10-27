@@ -2691,6 +2691,59 @@ describe('extended tag fields (composer, grouping, totals, sort)', () => {
     expect(plan(src, applied)).toEqual([]);
   });
 
+  test('a metadata correction rides along with an artwork update in the same sync', () => {
+    const ops = plan(
+      source({ artworkHash: 'bbbbbbbb', hasArtwork: true, composer: 'Bach' }),
+      device({
+        storesExtendedTags: true,
+        hasArtwork: true,
+        syncTag: parseSyncTag(
+          '[podkit:v1 quality=copy transferMode=fast codec=mp3 bitrate=256 art=aaaaaaaa]'
+        ),
+      })
+    );
+    expect(ops.map((op) => op.type).sort()).toEqual(['update-metadata', 'upgrade-artwork']);
+    expect(ops.find((op) => op.type === 'update-metadata')).toMatchObject({
+      metadata: { composer: 'Bach' },
+    });
+  });
+
+  test('a metadata correction rides along with a Sound Check update', () => {
+    const ops = plan(
+      source({
+        composer: 'Bach',
+        normalization: { source: 'replaygain-track', trackGain: -6, soundcheckValue: 2512 },
+      }),
+      device({ storesExtendedTags: true })
+    );
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as Extract<MusicOperation, { type: 'update-metadata' }>;
+    expect(op.metadata.composer).toBe('Bach');
+    expect(op.metadata.normalization).toBeDefined();
+  });
+
+  test('a missing composer does not hide a re-encode to a custom bitrate; the next plan is empty', () => {
+    const handler = createMusicHandler(
+      makeConfig({ quality: 'low', customBitrate: 96, reduce: 'always' })
+    );
+    const planWith = (src: CollectionTrack, dev: DeviceTrack) =>
+      createSyncPlanner(handler).plan(createSyncDiffer(handler).diff([src], [dev])).operations;
+
+    const src = source({ composer: 'Bach' });
+    const ops = planWith(src, device({ storesExtendedTags: true }));
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ type: 'upgrade-transcode', reason: 'quality-change' });
+
+    const reencoded = device({
+      storesExtendedTags: true,
+      composer: 'Bach',
+      filetype: 'AAC audio file',
+      bitrate: 96,
+      syncTag: parseSyncTag('[podkit:v1 quality=low encoding=vbr bitrate=96 transferMode=fast]'),
+    });
+    expect(planWith(src, reencoded)).toEqual([]);
+  });
+
   test('a device that does not store them is never flagged for them', () => {
     expect(plan(source({ sortArtist: 'Band, The', composer: 'Bach' }), device())).toEqual([]);
   });
