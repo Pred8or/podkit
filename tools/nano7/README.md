@@ -42,8 +42,11 @@ synthetic capabilities. It checks the integrity of the five SQLite databases,
 both signatures, rejection of malformed or iOS-sized GUIDs, and an unsigned
 `iTunesDB` for a 5th generation iPod.
 
-For the nano 6th and 7th generation the checks also cover iTunes' schema
-level: its additional columns, `user_version` 26 (`Library.itdb`) and 2
+For the nano 6th and 7th generation the checks also cover the six hidden
+category containers the firmware browses (Music, Videos, Movies, TV Shows,
+Audiobooks, Rentals) in `Library.itdb` and in the `iTunesCDB` dataset 5,
+whose header fields are kept as read, and iTunes' schema level: its
+additional columns, `user_version` 26 (`Library.itdb`) and 2
 (`Genius.itdb`) and the `version_info` row. The device's SQLite post-process
 command set 25 completes that schema. A missing set, a missing or failing
 command, or an insert or commit that fails while the databases are generated
