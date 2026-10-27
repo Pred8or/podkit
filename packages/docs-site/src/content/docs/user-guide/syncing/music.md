@@ -37,7 +37,7 @@ Composer, grouping, the totals and the sort fields are written to iPods, which k
 Limitations:
 
 - **The comment field is podkit's.** podkit stores its sync tag in the iPod comment field and does not copy your files' comments onto the iPod.
-- **Subsonic sources** do not provide these fields; podkit leaves them as they are on the iPod.
+- **Subsonic sources** provide composer and grouping only when the server implements the OpenSubsonic extensions; track/disc totals are not part of the API. A field the server does not report is left as it is on the iPod. Sort names from a Subsonic server are used only with the collection's `serverSortNames` opt-in; see [Composer, Grouping and Sort Names](/user-guide/collections/subsonic#composer-grouping-and-sort-names).
 
 ### Track Matching
 

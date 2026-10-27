@@ -270,6 +270,8 @@ export interface SubsonicAdapterConfig {
   password: string;
   /** When set, sync only this named server playlist instead of the whole library */
   playlist?: string;
+  /** Use the server's sort names as sort tags (see the Subsonic adapter) */
+  serverSortNames?: boolean;
 }
 
 /**

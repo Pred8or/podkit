@@ -299,6 +299,7 @@ path = "/cache/path"
 | `password` | string | no | - | Subsonic password (can also use env var) |
 | `path` | string | yes | - | Local cache path for downloaded files |
 | `playlist` | string | no | - | Sync only this named server playlist instead of the whole library. The name must match exactly one playlist on the server — the sync aborts before transferring anything if the name is not found or is ambiguous. Only valid on `subsonic` collections; setting it on a directory collection is a config error. See [Playlist-Scoped Collections](/user-guide/collections/subsonic#playlist-scoped-collections). |
+| `serverSortNames` | boolean | no | `false` | Use the server's sort names as the iPod's sort fields. Only for servers that report your real sort tags; by default podkit neither writes nor clears sort fields from a Subsonic source. Only valid on `subsonic` collections. See [Composer, Grouping and Sort Names](/user-guide/collections/subsonic#composer-grouping-and-sort-names). |
 
 The password can be provided via the config file, or through environment variables (see [Environment Variables](/reference/environment-variables)).
 

@@ -6,7 +6,7 @@
 
 Sync composer, grouping, track/disc totals and sort fields to iPods
 
-The directory adapter now reads composer, grouping, total tracks, total discs and the sort fields (sort title, artist, album, album artist, composer) from file tags. They are written to the iPod database when a track is added, and a change to any of them at the source is detected as a metadata correction and updated in place without copying the file again. A tag removed at the source is cleared on the device. A field the source cannot report is left untouched rather than cleared; Subsonic sources do not report these fields yet.
+The directory adapter now reads composer, grouping, total tracks, total discs and the sort fields (sort title, artist, album, album artist, composer) from file tags. They are written to the iPod database when a track is added, and a change to any of them at the source is detected as a metadata correction and updated in place without copying the file again. A tag removed at the source is cleared on the device. A field the source cannot report is left untouched rather than cleared.
 
 Mass-storage change detection is unchanged: podkit does not compare these fields there. A multi-disc track added to a mass-storage device now gets the `Album (disc N)` folder its path template asks for, since the total disc count reaches it. The comment field still carries podkit's sync tag; file comments are not copied.
 
