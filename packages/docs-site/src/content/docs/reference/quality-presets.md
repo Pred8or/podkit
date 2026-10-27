@@ -48,8 +48,13 @@ For a 4-minute song:
 | **high** | ~256 kbps | ~7.5 MB |
 | **medium** | ~192 kbps | ~5.6 MB |
 | **low** | ~128 kbps | ~3.8 MB |
+| `customBitrate = 96` | ~96 kbps | ~2.9 MB |
 
 VBR file sizes vary based on content complexity. CBR sizes are exact.
+
+### Custom Bitrate
+
+`customBitrate` (config, per device, `PODKIT_CUSTOM_BITRATE`, or `--custom-bitrate` for one run) replaces the preset's bitrate with any value from 64 to 320 kbps. It is the cap for every lossy target, including lossy reduction of MP3/AAC sources when `[bitrate].reduce` converts. See [Custom Bitrate](/user-guide/transcoding/audio#custom-bitrate).
 
 ### VBR vs CBR
 
@@ -69,6 +74,7 @@ podkit picks the best AAC encoder your FFmpeg offers -- `aac_at` (macOS AudioToo
 | high (and max AAC fallback) | 256k | 5 | 256k |
 | medium | 192k | 4 | 192k |
 | low | 128k | 3 | 128k |
+| `customBitrate = 96` | 96k | 2 | 96k |
 
 When `max` resolves to ALAC (on capable devices with lossless sources), the ALAC encoder is used instead. When `max` falls back to AAC, it uses the same encoder settings as `high`.
 
@@ -81,6 +87,8 @@ Notes:
   podkit used to map the target onto the nearest point of this encoder's quality scale (`-q:a`) instead. That scale is not a bitrate axis, so the mapping was only as good as the material it was calibrated on, and nearest-point rounding went upward as readily as downward — a 256 kbps preset could produce 305 kbps on demanding tracks.
 
   One limit remains: 64 kbps is the lowest rate this encoder offers for stereo, so a target below that cannot be honoured on macOS.
+
+- Below 128 kbps the encoders differ most in quality. `aac_at` is the best of the three there; FFmpeg's native `aac` is clearly weaker at 96 kbps, so a low custom bitrate is best encoded on macOS or with `libfdk_aac`.
 
 ## Video Presets
 

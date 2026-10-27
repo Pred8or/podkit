@@ -134,6 +134,7 @@ interface SyncOptions {
   encoding?: string;
   bitrateReduce?: string;
   bitrateTolerance?: number;
+  customBitrate?: number;
   transferMode?: string;
   filter?: string;
   artwork?: boolean;
@@ -294,6 +295,15 @@ function resolveEffectiveVideoQuality(
   );
 }
 
+/** Same range as the `customBitrate` config key. */
+export function parseCustomBitrate(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 64 || parsed > 320) {
+    throw new InvalidArgumentError('Must be an integer between 64 and 320 (kbps).');
+  }
+  return parsed;
+}
+
 const syncTypeOption = new Option(
   '-t, --type <type>',
   'sync type (repeatable, comma-separated, default: all)'
@@ -342,6 +352,12 @@ export const syncCommand = new Command('sync')
       }
       return parsed;
     })
+  )
+  .addOption(
+    new Option(
+      '--custom-bitrate <kbps>',
+      'lossy audio bitrate in kbps (64-320) that replaces the preset bitrate as the cap — overrides config for this run'
+    ).argParser(parseCustomBitrate)
   )
   .addOption(
     new Option(
@@ -578,7 +594,7 @@ export async function runSync(
       transferMode: options.transferMode
         ? (options.transferMode as import('@podkit/core').TransferMode)
         : resolved.transferMode.value,
-      customBitrate: resolved.customBitrate.value,
+      customBitrate: options.customBitrate ?? resolved.customBitrate.value,
       // `--bitrate-reduce` / `--bitrate-tolerance` override the resolved
       // device → global → default chain for this run only. Neither flag has a
       // Commander default, so an unpassed flag is absent here and the resolved
