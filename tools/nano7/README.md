@@ -42,6 +42,14 @@ synthetic capabilities. It checks the integrity of the five SQLite databases,
 both signatures, rejection of malformed or iOS-sized GUIDs, and an unsigned
 `iTunesDB` for a 5th generation iPod.
 
+For the nano 6th and 7th generation the checks also cover iTunes' schema
+level: its additional columns, `user_version` 26 (`Library.itdb`) and 2
+(`Genius.itdb`) and the `version_info` row. The device's SQLite post-process
+command set 25 completes that schema. A missing set, a missing or failing
+command, or an insert or commit that fails while the databases are generated
+fails the write and leaves the library unchanged. A nano 5th generation keeps
+libgpod's previous layout.
+
 ## Checking a copied device library
 
 A nano 7th generation synced by macOS carries no `SysInfoExtended` file, so

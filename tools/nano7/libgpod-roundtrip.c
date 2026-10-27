@@ -1,5 +1,6 @@
-/* Create, resave or delete one synthetic track with libgpod.
- * Usage: libgpod-roundtrip <temporary mountpoint> create|resave|delete */
+/* Create, resave or delete one synthetic track with libgpod, give it a 1 MiB
+ * comment (grow) or the second playlist the master playlist's id (clash).
+ * Usage: libgpod-roundtrip <temporary mountpoint> create|resave|delete|grow|clash */
 #include <gpod/itdb.h>
 #include <string.h>
 
@@ -52,6 +53,11 @@ int main(int argc, char **argv)
             for (item = db->playlists; item; item = item->next)
                 itdb_playlist_remove_track(item->data, track);
             itdb_track_remove(track);
+        } else if (strcmp(argv[2], "grow") == 0) {
+            g_free(track->comment);
+            track->comment = g_strnfill(1 << 20, 'x');
+        } else if (strcmp(argv[2], "clash") == 0) {
+            ((Itdb_Playlist *)g_list_last(db->playlists)->data)->id = itdb_playlist_mpl(db)->id;
         } else if (strcmp(argv[2], "resave") != 0) {
             return 2;
         }

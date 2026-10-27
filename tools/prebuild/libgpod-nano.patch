@@ -72,6 +72,590 @@
  
      return TRUE;
  }
+--- a/src/itdb_device.c
++++ b/src/itdb_device.c
+@@ -1413,6 +1413,16 @@ itdb_device_supports_sqlite_db (const Itdb_Device *device)
+     }
+ }
+ 
++/* iPod nano 6G/7G: the firmware browses the HashAB-signed SQLite library
++   and expects it in the layout iTunes writes */
++G_GNUC_INTERNAL gboolean
++itdb_device_is_hashab_nano (const Itdb_Device *device)
++{
++    return itdb_device_supports_sqlite_db (device)
++	&& !itdb_device_is_iphone_family (device)
++	&& itdb_device_get_checksum_type (device) == ITDB_CHECKSUM_HASHAB;
++}
++
+ G_GNUC_INTERNAL gboolean
+ itdb_device_supports_compressed_itunesdb (const Itdb_Device *device)
+ {
+--- a/src/itdb_device.h
++++ b/src/itdb_device.h
+@@ -176,6 +176,7 @@ G_GNUC_INTERNAL const char *itdb_device_get_firewire_id (const Itdb_Device *devi
+ G_GNUC_INTERNAL gboolean itdb_device_supports_sparse_artwork (const Itdb_Device *device);
+ G_GNUC_INTERNAL gboolean itdb_device_supports_compressed_itunesdb (const Itdb_Device *device);
+ G_GNUC_INTERNAL gboolean itdb_device_supports_sqlite_db (const Itdb_Device *device);
++G_GNUC_INTERNAL gboolean itdb_device_is_hashab_nano (const Itdb_Device *device);
+ G_GNUC_INTERNAL gboolean itdb_device_get_storage_info (Itdb_Device *device, guint64 *capacity, guint64 *free);
+ G_GNUC_INTERNAL gboolean itdb_device_write_checksum (Itdb_Device *device,
+ 						     unsigned char *itdb_data,
+--- a/src/itdb_sqlite_queries.h
++++ b/src/itdb_sqlite_queries.h
+@@ -77,6 +77,22 @@ static const char Library_create[] =
+ 	"END;" \
+ 	"COMMIT;";
+ 
++/** columns iTunes' 'Library.itdb' has in addition, for iPod nano 6G/7G;
++ *  the device's post-process commands add is_home_video */
++static const char Library_nano_columns[] =
++	"ALTER TABLE item ADD COLUMN is_tone INTEGER DEFAULT 0;" \
++	"ALTER TABLE item ADD COLUMN is_book INTEGER DEFAULT 0;" \
++	"ALTER TABLE item ADD COLUMN is_itunes_u INTEGER DEFAULT 0;" \
++	"ALTER TABLE item ADD COLUMN is_digital_booklet INTEGER DEFAULT 0;" \
++	"ALTER TABLE item ADD COLUMN chosen_by_auto_fill INTEGER DEFAULT 0;" \
++	"ALTER TABLE item ADD COLUMN collection_description TEXT;" \
++	"ALTER TABLE item ADD COLUMN copyright TEXT;" \
++	"ALTER TABLE avformat_info ADD COLUMN channels INTEGER DEFAULT 0;" \
++	"ALTER TABLE video_info ADD COLUMN is_hd INTEGER;" \
++	"ALTER TABLE store_info ADD COLUMN xid TEXT;" \
++	"ALTER TABLE store_info ADD COLUMN flavor TEXT;" \
++	"ALTER TABLE container ADD COLUMN smart_evaluation_order INTEGER;";
++
+ /** creation statement for 'Locations.itdb' */
+ static const char Locations_create[] =
+ 	"BEGIN TRANSACTION;" \
+--- a/src/itdb_sqlite.c
++++ b/src/itdb_sqlite.c
+@@ -190,6 +190,7 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+     struct stat fst;
+     int idx = 0;
+     GList *gl = NULL;
++    gboolean nano = itdb_device_is_hashab_nano(itdb->device);
+ 
+     dbf = g_build_filename(outpath, "Dynamic.itdb", NULL);
+     printf("[%s] Processing '%s'\n", __func__, dbf);
+@@ -227,7 +228,11 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+ 	goto leave;
+     }
+ 
+-    sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
++    if (SQLITE_OK != sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] BEGIN failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
++    }
+ 
+     if (itdb->tracks) {
+ 	printf("[%s] - processing %d tracks\n", __func__, g_list_length(itdb->tracks));
+@@ -277,6 +282,8 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+ 		/* expected result */
+ 	    } else {
+ 		fprintf(stderr, "[%s] 1 sqlite3_step returned %d\n", __func__, res);
++		if (nano)
++		    goto leave;
+ 	    }
+ 	}
+ 	if (stmt) {
+@@ -333,19 +340,23 @@ static int mk_Dynamic(Itdb_iTunesDB *itdb, const char *outpath)
+ 	    /* expected result */
+ 	} else {
+ 	    fprintf(stderr, "[%s] 2 sqlite3_step returned %d\n", __func__, res);
++	    if (nano)
++		goto leave;
+ 	}
+     }
+ 
+-    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
+-
+-    if (stmt) {
+-	sqlite3_finalize(stmt);
+-	stmt = NULL;
++    if (SQLITE_OK != sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] COMMIT failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
+     }
+ 
+     res = 0;
+     printf("[%s] done.\n", __func__);
+ leave:
++    if (stmt) {
++	sqlite3_finalize(stmt);
++    }
+     if (db) {
+ 	sqlite3_close(db);
+     }
+@@ -363,6 +374,7 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
+     sqlite3 *db = NULL;
+     sqlite3_stmt *stmt_chapter = NULL;
+     char *errmsg = NULL;
++    gboolean nano = itdb_device_is_hashab_nano(itdb->device);
+     struct stat fst;
+     GList *gl = NULL;
+ 
+@@ -399,7 +411,11 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
+ 	}
+     }
+ 
+-    sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
++    if (SQLITE_OK != sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] BEGIN failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
++    }
+     if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"chapter\" VALUES(?,?);", -1, &stmt_chapter, NULL)) {
+ 	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
+ 	goto leave;
+@@ -450,9 +466,15 @@ static int mk_Extras(Itdb_iTunesDB *itdb, const char *outpath)
+ 		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
+ 	    }
+ 	    g_byte_array_free(chapter_blob, TRUE);
++	    if (res != SQLITE_DONE && nano)
++		goto leave;
+ 	}
+     }
+-    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
++    if (SQLITE_OK != sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] COMMIT failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
++    }
+ 
+     res = 0;
+     printf("[%s] done.\n", __func__);
+@@ -510,6 +532,12 @@ static int mk_Genius(Itdb_iTunesDB *itdb, const char *outpath)
+ 	    goto leave;
+ 	}
+     }
++    /* iTunes' schema level of Genius.itdb on nano 6G/7G */
++    if (itdb_device_is_hashab_nano(itdb->device)
++	&& SQLITE_OK != sqlite3_exec(db, "PRAGMA user_version = 2;", NULL, NULL, NULL)) {
++	fprintf(stderr, "[%s] could not set user_version: %s\n", __func__, sqlite3_errmsg(db));
++	goto leave;
++    }
+ 
+     sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
+ 
+@@ -615,6 +643,7 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+     GHashTable *genre_map = NULL;
+     GHashTable **orders = NULL;
+     guint32 genre_index;
++    gboolean nano = itdb_device_is_hashab_nano(itdb->device);
+     printf("library_persistent_id = 0x%016"G_GINT64_MODIFIER"x\n", itdb->priv->pid);
+ 
+     dbf = g_build_filename(outpath, "Library.itdb", NULL);
+@@ -652,8 +681,16 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	}
+ 	goto leave;
+     }
++    if (nano && SQLITE_OK != sqlite3_exec(db, Library_nano_columns, NULL, NULL, NULL)) {
++	fprintf(stderr, "[%s] could not add columns: %s\n", __func__, sqlite3_errmsg(db));
++	goto leave;
++    }
+ 
+-    sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
++    if (SQLITE_OK != sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] BEGIN failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
++    }
+ 
+     fprintf(stderr, "[%s] compiling SQL statements\n", __func__);
+     if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"version_info\" VALUES(?,?,?,?,?,?,?);", -1, &stmt_version_info, NULL)) {
+@@ -665,7 +702,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	goto leave;
+     }
+     if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"container\" "
+-	    "VALUES(?,?,?,?,:name,?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);", -1, &stmt_container, NULL)) {
++	    "(pid,distinguished_kind,date_created,date_modified,name,name_order,parent_pid,media_kinds,"
++	    "workout_template_id,is_hidden,smart_is_folder) VALUES(?,?,?,?,:name,?,?,?,?,?,?);", -1, &stmt_container, NULL)) {
+ 	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
+ 	goto leave;
+     }
+@@ -688,7 +726,10 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
+ 	goto leave;
+     }
+-    if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"avformat_info\" VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?);", -1, &stmt_avformat_info, NULL)) {
++    if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"avformat_info\" "
++	    "(item_pid,sub_id,audio_format,bit_rate,sample_rate,duration,gapless_heuristic_info,gapless_encoding_delay,"
++	    "gapless_encoding_drain,gapless_last_frame_resynch,analysis_inhibit_flags,audio_fingerprint,"
++	    "volume_normalization_energy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?);", -1, &stmt_avformat_info, NULL)) {
+ 	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
+ 	goto leave;
+     }
+@@ -708,7 +749,12 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
+ 	goto leave;
+     }
+-    if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"video_info\" VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);", -1, &stmt_video_info, NULL)) {
++    if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"video_info\" "
++	    "(item_pid,has_alternate_audio,has_subtitles,characteristics_valid,has_closed_captions,is_self_contained,"
++	    "is_compressed,is_anamorphic,season_number,audio_language,audio_track_index,audio_track_id,"
++	    "subtitle_language,subtitle_track_index,subtitle_track_id,series_name,sort_series_name,episode_id,"
++	    "episode_sort_id,network_name,extended_content_rating,movie_info) "
++	    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);", -1, &stmt_video_info, NULL)) {
+ 	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
+ 	goto leave;
+     }
+@@ -721,9 +767,10 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+     /* major */
+     /* FIXME: the versioning scheme needs to be updated in libgpod using */
+     /* major+minor version, this is a workaround */
+-    sqlite3_bind_int(stmt_version_info, ++idx, (itdb->version >= 0x28) ? 2 : 1);
++    /* nano 6G/7G: what iTunes writes (1.117), whatever the iTunesDB version */
++    sqlite3_bind_int(stmt_version_info, ++idx, (nano || itdb->version < 0x28) ? 1 : 2);
+     /* minor */
+-    sqlite3_bind_int(stmt_version_info, ++idx, itdb->version);
++    sqlite3_bind_int(stmt_version_info, ++idx, nano ? 117 : itdb->version);
+     /* compatibility */
+     /* This has an unknown meaning. use 0. */
+     sqlite3_bind_int(stmt_version_info, ++idx, 0);
+@@ -740,6 +787,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	/* expected result */
+     } else {
+ 	fprintf(stderr, "[%s] 2 sqlite3_step returned %d\n", __func__, res);
++	if (nano)
++	    goto leave;
+     }
+ 
+     printf("[%s] - inserting into \"genre_map\"\n", __func__);
+@@ -809,6 +858,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 		/* expected result */
+ 	    } else {
+ 		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
++		if (nano)
++		    goto leave;
+ 	    }
+ 
+ 	    types |= track->mediatype;
+@@ -863,6 +914,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	    /* expected result */
+ 	} else {
+ 	    fprintf(stderr, "[%s] 4 sqlite3_step returned %d\n", __func__, res);
++	    if (nano)
++		goto leave;
+ 	}
+     }
+ 
+@@ -911,6 +964,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	/* expected result */
+     } else {
+ 	fprintf(stderr, "[%s] 3 sqlite3_step returned %d\n", __func__, res);
++	if (nano)
++	    goto leave;
+     }
+ 
+     /* for each track: */
+@@ -1088,6 +1143,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	    /* expected result */
+ 	} else {
+ 	    fprintf(stderr, "[%s] 5 sqlite3_step returned %d: %s\n", __func__, res, sqlite3_errmsg(db));
++	    if (nano)
++		goto leave;
+ 	}
+ 
+ 	/* printf("[%s] -- inserting into \"avformat_info\"\n", __func__); */
+@@ -1144,6 +1201,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 	    /* expected result */
+ 	} else {
+ 	    fprintf(stderr, "[%s] 7 sqlite3_step returned %d\n", __func__, res);
++	    if (nano)
++		goto leave;
+ 	}
+ 
+ 	/* this is done by a trigger, so we don't need to do this :-D */
+@@ -1191,6 +1250,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 		/* expected result */
+ 	    } else {
+ 		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
++		if (nano)
++		    goto leave;
+ 	    }
+ 	}
+ 
+@@ -1227,6 +1288,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 		/* expected result */
+ 	    } else {
+ 		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
++		if (nano)
++		    goto leave;
+ 	    }
+ 	}
+ 
+@@ -1252,6 +1315,8 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 		/* expected result */
+ 	    } else {
+ 		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
++		if (nano)
++		    goto leave;
+ 	    }
+ 	}
+ 	/* if it's a movie, music video or tv show */
+@@ -1314,13 +1379,19 @@ static int mk_Library(Itdb_iTunesDB *itdb,
+ 		/* expected result */
+ 	    } else {
+ 		fprintf(stderr, "[%s] 8 sqlite3_step returned %d\n", __func__, res);
++		if (nano)
++		    goto leave;
+ 	    }
+ 	}
+     }
+ 
+     sqlite3_exec(db, "UPDATE album SET artwork_item_pid = (SELECT item.pid FROM item WHERE item.artwork_cache_id != 0 AND item.album_pid = album.pid LIMIT 1);", NULL, NULL, NULL);
+ 
+-    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
++    if (SQLITE_OK != sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] COMMIT failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
++    }
+ 
+     res = 0;
+     printf("[%s] done.\n", __func__);
+@@ -1385,6 +1456,7 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+     sqlite3_stmt *stmt = NULL;
+     char *errmsg = NULL;
+     int idx = 0;
++    gboolean nano = itdb_device_is_hashab_nano(itdb->device);
+ 
+     dbf = g_build_filename(outpath, "Locations.itdb", NULL);
+     printf("[%s] Processing '%s'\n", __func__, dbf);
+@@ -1415,7 +1487,11 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+ 	goto leave;
+     }
+ 
+-    sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
++    if (SQLITE_OK != sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] BEGIN failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
++    }
+ 
+     if (SQLITE_OK != sqlite3_prepare_v2(db, "INSERT INTO \"base_location\" (id, path) VALUES (?,?);", -1, &stmt, NULL)) {
+ 	fprintf(stderr, "[%s] sqlite3_prepare error: %s\n", __func__, sqlite3_errmsg(db));
+@@ -1438,6 +1514,8 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+ 	/* expected result */
+     } else {
+ 	fprintf(stderr, "[%s] sqlite3_step returned %d\n", __func__, res);
++	if (nano)
++	    goto leave;
+     }
+ 
+     if (itdb_device_is_iphone_family(itdb->device)) {
+@@ -1489,7 +1567,6 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+ 	    int i = 0;
+ 	    int cnt = 0;
+ 	    int pos = 0;
+-	    int res;
+ 
+ 	    if (!track->ipod_path) {
+ 		continue;
+@@ -1556,12 +1633,18 @@ static int mk_Locations(Itdb_iTunesDB *itdb, const char *outpath, const char *uu
+ 		free(ipod_path);
+ 		ipod_path = NULL;
+ 	    }
++	    if (res != SQLITE_DONE && nano)
++		goto leave;
+ 	}
+     } else {
+ 	printf("[%s] No tracks available, none written.\n", __func__);
+     }
+ 
+-    sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
++    if (SQLITE_OK != sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) && nano) {
++	fprintf(stderr, "[%s] COMMIT failed: %s\n", __func__, sqlite3_errmsg(db));
++	res = -1;
++	goto leave;
++    }
+ 
+     res = 0;
+     printf("[%s] done.\n", __func__);
+@@ -1752,7 +1835,28 @@ static void sqlite_func_iphone_sort_section(sqlite3_context *context, int argc,
+ 	sqlite3_result_int(context, res);
+ }
+ 
+-static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath, const char *uuid)
++/* Set 25 adds two columns a second time: libgpod's item_stats has
++   rental_expired already, and AddGenreMapCompilationCount is listed
++   twice. Only the repeats are skipped. */
++static gboolean is_repeated_column(sqlite3 *db, const char *key, gboolean genre_count_added)
++{
++    sqlite3_stmt *stmt = NULL;
++    gboolean present;
++
++    if (strcmp(key, "AddGenreMapCompilationCount") == 0)
++	return genre_count_added;
++    if (strcmp(key, "CreateRentalExpiredColumn") != 0)
++	return FALSE;
++    present = sqlite3_prepare_v2(db, "SELECT rental_expired FROM item_stats;", -1, &stmt, NULL) == SQLITE_OK;
++    sqlite3_finalize(stmt);
++    return present;
++}
++
++/* iPod nano 6G/7G need the commands to reach the schema level their
++   firmware expects: there a missing or failing command fails the write,
++   other devices only log it. */
++static int run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath, const char *uuid,
++				     GError **error)
+ {
+     plist_t plist_node = NULL;
+     plist_t ppc_dict = NULL;
+@@ -1760,6 +1864,8 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+     const gchar *otherdbs[] = {"Dynamic.itdb", "Extras.itdb", "Genius.itdb", "Locations.itdb", NULL};
+     int res;
+     sqlite3 *db = NULL;
++    gboolean nano = itdb_device_is_hashab_nano(itdb->device);
++    gchar *failure = NULL;
+ 
+ #ifdef HAVE_LIBIMOBILEDEVICE
+     if (itdb_device_is_iphone_family(itdb->device)) {
+@@ -1846,7 +1952,9 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+ 		plist_dict_next_item(curnode, iter, &key, &subnode);
+ 		while (subnode) {
+ 		    unsigned long int intval = strtoul(key, NULL, 0);
+-		    if ((intval > 0) && (intval > maxver)) {
++		    /* nano 6G/7G: set 25 fits libgpod's schema plus
++		       Library_nano_columns and raises it to iTunes' level 26 */
++		    if (nano ? (intval == 25) : ((intval > 0) && (intval > maxver))) {
+ 			user_ver_cmds = subnode;
+ 			maxver = intval;
+ 		    }
+@@ -1874,6 +1982,7 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+ 		    	gchar *attach_str = NULL;
+ 			char *errmsg = NULL;
+ 			guint32 i = 0, cnt = 0, ok_cnt = 0;
++			gboolean genre_count_added = FALSE;
+ 
+ 			plist_dict_new_iter(sql_cmds, &iter);
+ 			if (iter) {
+@@ -1900,6 +2009,7 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+ 
+ 			if (SQLITE_OK != sqlite3_open((const char*)dbf, &db)) {
+ 			    fprintf(stderr, "Error opening database '%s': %s\n", dbf, sqlite3_errmsg(db));
++			    failure = g_strdup_printf("cannot open '%s'", dbf);
+ 			    g_free(dbf);
+ 			    goto leave;
+ 			}
+@@ -1910,12 +2020,14 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+ 			while (otherdbs[i]) {
+ 			    errmsg = NULL;
+ 			    dbf = g_build_filename(outpath, otherdbs[i], NULL);
+-			    attach_str = g_strdup_printf("ATTACH DATABASE '%s' AS '%s';", dbf, otherdbs[i]);
++			    attach_str = sqlite3_mprintf("ATTACH DATABASE %Q AS %Q;", dbf, otherdbs[i]);
+ 			    g_free(dbf);
+ 			    res = sqlite3_exec(db, attach_str, NULL, NULL, &errmsg);
+-			    g_free(attach_str);
++			    sqlite3_free(attach_str);
+ 			    if (res != SQLITE_OK) {
+ 				printf("[%s] WARNING: Could not attach database '%s': %s\n", __func__, otherdbs[i], errmsg);
++				if (!failure)
++				    failure = g_strdup_printf("cannot attach '%s': %s", otherdbs[i], errmsg);
+ 			    }
+ 			    if (errmsg) {
+ 				free(errmsg);
+@@ -1930,28 +2042,39 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+ 			cnt = plist_array_get_size(user_ver_cmds);
+ 			printf("[%s] Running %d post process commands now\n", __func__, cnt);
+ 
+-			sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
+-			for (i=0; i<cnt; i++) {
++			if (SQLITE_OK != sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL) && nano && !failure)
++			    failure = g_strdup_printf("BEGIN failed: %s", sqlite3_errmsg(db));
++			for (i=0; i<cnt && !(nano && failure); i++) {
+ 			    subnode = plist_array_get_item(user_ver_cmds, i);
+ 			    plist_get_string_val(subnode, &key);
+ 			    if (key) {
+ 				val = g_hash_table_lookup(sqlcmd_map, key);
+-				if (val) {
++				if (val && nano && is_repeated_column(db, key, genre_count_added)) {
++				    ok_cnt++;
++				} else if (val) {
+ 				    char *errmsg = NULL; 
+ 				    if (SQLITE_OK == sqlite3_exec(db, val, NULL, NULL, &errmsg)) {
+ 				        /*printf("[%s] executing '%s': OK", __func__, key);*/
+ 					ok_cnt++;
++					if (strcmp(key, "AddGenreMapCompilationCount") == 0)
++					    genre_count_added = TRUE;
+ 				    } else {
+ 					printf("[%s] ERROR when executing '%s': %s\n", __func__, key, errmsg);
++					if (!failure)
++					    failure = g_strdup_printf("'%s' failed: %s", key, errmsg);
+ 				    }
+ 				    if (errmsg) {
+ 					sqlite3_free(errmsg);
+ 				    }
+ 				} else {
+ 				    printf("[%s] value for '%s' not found in hashmap!\n", __func__, key);
++				    if (!failure)
++					failure = g_strdup_printf("'%s' is missing", key);
+ 				}
+ 				free(key);
+ 				key = NULL;
++			    } else if (!failure) {
++				failure = g_strdup_printf("command %u is not a name", i);
+ 			    }
+ 			}
+ 			g_hash_table_foreach(sqlcmd_map, free_key_val_strings, NULL);
+@@ -1959,19 +2082,28 @@ static void run_post_process_commands(Itdb_iTunesDB *itdb, const char *outpath,
+ 
+ 			printf("[%s] %d out of %d post process commands successfully executed\n", __func__, ok_cnt, cnt);
+ 			/* TODO perhaps we want to roll back when an error has occured ? */
+-			sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
++			if (nano && failure) {
++			    sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
++			} else if (SQLITE_OK != sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) && !failure) {
++			    failure = g_strdup_printf("COMMIT failed: %s", sqlite3_errmsg(db));
++			}
+ 		    } else {
+ 			printf("[%s]: Error: could not create hash table!\n", __func__);
+ 		    }
+ 		} else {
+ 		    printf("[%s]: Error fetching commands array\n", __func__);
++		    failure = g_strdup("no command list");
+ 		}
+ 	    } else {
+ 		printf("[%s]: Error fetching user version command set\n", __func__);
++		failure = g_strdup(nano ? "no command set 25" : "no command set");
+ 	    }
+ 	} else {
+ 	    printf("[%s]: Error fetching post process commands from device!\n", __func__);
++	    failure = g_strdup("malformed command list");
+ 	}
++    } else {
++	failure = g_strdup("none listed by the device");
+     }
+    
+     printf("[%s] done.\n", __func__);
+@@ -1983,7 +2115,14 @@ leave:
+     if (plist_node) {
+ 	plist_free(plist_node);
+     }
+-
++    res = 0;
++    if (nano && failure) {
++	g_set_error(error, ITDB_ERROR, ITDB_ERROR_SQLITE,
++		    "SQLite post-process commands: %s", failure);
++	res = -1;
++    }
++    g_free(failure);
++    return res;
+ }
+ 
+ static int cbk_calc_sha1_one_block(FILE *f, unsigned char sha1[20])
+@@ -2167,7 +2306,9 @@ static int build_itdb_files(Itdb_iTunesDB *itdb,
+ 	return -1;
+     }
+ 
+-    run_post_process_commands(itdb, outpath, uuid);
++    if (run_post_process_commands(itdb, outpath, uuid, error) != 0) {
++	return -1;
++    }
+ 
+     if (!mk_Locations_cbk(itdb, outpath)) {
+ 	g_set_error (error, ITDB_ERROR, ITDB_ERROR_SQLITE,
 --- a/src/Makefile.am
 +++ b/src/Makefile.am
 @@ -31,6 +31,33 @@ libgpod_la_CFLAGS =
