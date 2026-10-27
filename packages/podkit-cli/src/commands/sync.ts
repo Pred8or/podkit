@@ -1289,6 +1289,7 @@ export async function runSync(
           effectiveVideoTransforms,
           effectiveTransferMode,
           forceMetadata: options.forceMetadata ?? false,
+          ipodGenerationId: openResult.ipodModel?.generationId,
         };
 
         // allowEmptyPlaylist is intentionally omitted: video collections cannot

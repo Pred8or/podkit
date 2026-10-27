@@ -282,7 +282,7 @@ iPod_Control/
 | Shuffle 1-2G | Yes | No | No | No | — | None |
 | Nano 1-2G | Yes | No | Yes | No | — | 176x132 |
 | Nano 3-5G | Yes | Yes | Yes | Yes | ipod-nano-3g | Varies |
-| Nano 7G | Yes | Yes | Yes | Yes | ipod-classic | 240x432 |
+| Nano 7G | Yes | Yes | Yes | Yes | ipod-nano-7g | 240x432 |
 | Video 5G | Yes | Yes | Yes | Yes | ipod-video-5g | 320x240 |
 | Video 5.5G | Yes | Yes | Yes | Yes | ipod-video-5g | 320x240 |
 | Classic 6G | Yes | Yes | Yes | Yes | ipod-classic | 320x240 |
@@ -305,6 +305,11 @@ iPod_Control/
 |---------|-----------|---------------|-------------------|-----------|-----|---------|
 | ipod-video-5g | 320x240 | Baseline | 768 kbps | 128 kbps | 30 | Video 5G/5.5G, Nano 3-5G |
 | ipod-classic | 640x480 | Main | 2500 kbps | 160 kbps | 30 | Classic 6G/6.5G/7G |
+| ipod-nano-7g | 432x240 | Baseline 3.0 | 1000 kbps | 128 kbps | 30 | Nano 7G |
+
+Nano 7G: 432x240 is the screen size, not the decoder's limit (see
+`DEVICE_PROFILES` in `packages/podkit-core/src/video/types.ts`). Nano 6G has no
+video playback.
 
 ## Quirks & Limitations
 
