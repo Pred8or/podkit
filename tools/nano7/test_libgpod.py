@@ -350,6 +350,25 @@ class LibgpodRoundtripTests(unittest.TestCase):
                 self.assertIn("post-process commands", result.stderr)
                 self.assertEqual(self.snapshot(), library)
 
+    def test_nano_firmware_1_0_1_command_set_9(self):
+        # Firmware 1.0.1 lists only set 9: set 25 without its later commands,
+        # and device update level 1107. It has no track choice columns.
+        sets, sql = self.commands["UserVersionCommandSets"], self.commands["SQLCommands"]
+        later = {"CreateIsHomeVideo", "FakePragmaITunes26", "UpdateDeviceUpdateLevelTo1109"}
+        names = [name for name in sets["25"]["Commands"]
+                 if name not in later and "ItemStatsAudio" not in name and "ItemStatsSubtitle" not in name]
+        set_9 = dict(sets["25"], Commands=names + ["UpdateDeviceUpdateLevelTo1107"])
+        self.setup_synthetic("MC526", 5, dict(
+            self.commands, UserVersionCommandSets={"9": set_9},
+            SQLCommands=dict(sql, UpdateDeviceUpdateLevelTo1107=
+                             "UPDATE version_info SET device_update_level = 1107;")))
+        self.run_helper("create")
+        self.run_helper("resave")
+        self.check_library(1)
+        self.assertEqual(rows(self.db("Library"), "SELECT device_update_level FROM version_info"),
+                         [(1107,)])
+        self.assertNotIn("audio_language", columns(self.db("Dynamic"), "item_stats"))
+
     def test_nano_runs_the_first_genre_count_command(self):
         # Set 25 lists AddGenreMapCompilationCount twice; only the repeat is skipped.
         sql = dict(self.commands["SQLCommands"])

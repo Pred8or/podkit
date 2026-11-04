@@ -955,9 +955,9 @@
  		while (subnode) {
  		    unsigned long int intval = strtoul(key, NULL, 0);
 -		    if ((intval > 0) && (intval > maxver)) {
-+		    /* nano 6G/7G: set 25 fits libgpod's schema plus
-+		       Library_nano_columns and raises it to iTunes' level 26 */
-+		    if (nano ? (intval == 25) : ((intval > 0) && (intval > maxver))) {
++		    /* nano 6G/7G: set 25 fits libgpod's schema plus Library_nano_columns;
++		       firmware 1.0.1 lists only its predecessor, set 9 */
++		    if (nano ? (intval == 25 || (intval == 9 && maxver != 25)) : ((intval > 0) && (intval > maxver))) {
  			user_ver_cmds = subnode;
  			maxver = intval;
  		    }
@@ -1094,7 +1094,7 @@
  
      if (!mk_Locations_cbk(itdb, outpath)) {
  	g_set_error (error, ITDB_ERROR, ITDB_ERROR_SQLITE,
-@@ -2250,6 +2476,187 @@ static void rmdir_recursive(gchar *path)
+@@ -2250,6 +2476,198 @@ static void rmdir_recursive(gchar *path)
      g_rmdir(path);
  }
  
@@ -1241,6 +1241,17 @@
 +    g_free(itlpdir);
 +}
 +
++/* Command set 9 (nano 7G firmware 1.0.1) creates no track choice columns */
++static gboolean has_track_choices(const char *dbf)
++{
++    sqlite3 *db = NULL;
++    gboolean present = sqlite3_open(dbf, &db) == SQLITE_OK
++	&& sqlite3_exec(db, "SELECT audio_language FROM item_stats LIMIT 0;", NULL, NULL, NULL) == SQLITE_OK;
++
++    sqlite3_close(db);
++    return present;
++}
++
 +/* iPod nano 6G/7G: keep the audio and subtitle track choices the device
 +   recorded for items still in the library; the post-process commands
 +   reset them. */
@@ -1258,7 +1269,7 @@
 +		    "the plays, ratings and bookmarks it holds; remove it to write without them",
 +		    device_file);
 +	res = -1;
-+    } else if (g_file_test(device_file, G_FILE_TEST_EXISTS)) {
++    } else if (g_file_test(device_file, G_FILE_TEST_EXISTS) && has_track_choices(dbf)) {
 +	/* The columns are unqualified: one that the device's item_stats
 +	   lacks names the new row's own, which keeps its value. */
 +	char *sql = sqlite3_mprintf("ATTACH DATABASE %Q AS device;"
@@ -1282,7 +1293,7 @@
  int itdb_sqlite_generate_itdbs(FExport *fexp)
  {
      int res = 0;
-@@ -2277,6 +2684,7 @@ int itdb_sqlite_generate_itdbs(FExport *fexp)
+@@ -2277,6 +2695,7 @@ int itdb_sqlite_generate_itdbs(FExport *fexp)
      g_assert(fexp->itdb->playlists != NULL);
  
      tzoffset = fexp->itdb->tzoffset;
@@ -1290,7 +1301,7 @@
  
      tmpdir = g_build_path(g_get_tmp_dir(), tmpnam(NULL), NULL);
      if (g_mkdir(tmpdir, 0755) != 0) {
-@@ -2289,7 +2697,8 @@ int itdb_sqlite_generate_itdbs(FExport *fexp)
+@@ -2289,7 +2708,8 @@ int itdb_sqlite_generate_itdbs(FExport *fexp)
  
      /* generate itdb files in temporary directory */
      if (build_itdb_files(fexp->itdb, fexp->albums, fexp->artists, fexp->composers, tmpdir,

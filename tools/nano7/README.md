@@ -50,10 +50,12 @@ Audiobooks, Rentals) in `Library.itdb` and in the `iTunesCDB` dataset 5,
 whose header fields are kept as read, and iTunes' schema level: its
 additional columns, `user_version` 26 (`Library.itdb`) and 2
 (`Genius.itdb`) and the `version_info` row. The device's SQLite post-process
-command set 25 completes that schema. A missing set, a missing or failing
-command, or an insert or commit that fails while the databases are generated
-fails the write and leaves the library unchanged. A nano 5th generation keeps
-libgpod's previous layout.
+command set 25 completes that schema. Firmware 1.0.1 lists only its
+predecessor, set 9, which lacks the track choice columns and
+`FakePragmaITunes26`; set 9 is used when set 25 is absent. A missing set, a
+missing or failing command, or an insert or commit that fails while the
+databases are generated fails the write and leaves the library unchanged. A
+nano 5th generation keeps libgpod's previous layout.
 
 A write keeps what a nano 6th/7th generation recorded in `Dynamic.itdb`.
 Plays, skips, ratings, bookmarks, recent counts and their dates become the
